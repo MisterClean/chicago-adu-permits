@@ -40,7 +40,9 @@ Classification trims surrounding whitespace only. A missing action date is accep
 
 ## Outbox and platform boundary
 
-Events store initial evidence separately from operator-approved evidence. Deliveries are unique by `(event_key, platform, account DID)`. Delivery identity and immutable JSON are committed before a first network write, followed by a durable `sending` state and attempt log. Restarts reconcile attempted work first, even if the application later disappears or source data becomes stale.
+Events store initial evidence separately from operator-approved evidence. Deliveries are unique by `(event_key, platform, account DID)`. Delivery identity and immutable JSON are committed before a first post write, followed by a durable `sending` state and attempt log. Restarts reconcile attempted work first, even if the application later disappears or source data becomes stale.
+
+Template v2 prepares a native JPEG with project-address Street View, plain-language unit type and Chicago typography/colors. It uploads the image before freezing the blob reference, alt text and dimensions into the post. An interrupted preparation may leave an unreferenced blob, but cannot create a post. Preparation failures are deferred with zero post attempts, so evidence remains reviewable. Once frozen, retries do not fetch Street View or upload another image. Legacy frozen v1 text-only records retain their payloads. Text previews/dry runs remain offline; explicit image previews fetch Street View without Bluesky authentication.
 
 Bluesky uses a 13-character, persisted monotonic TID and a guarded create via `putRecord`. Structural equality with the frozen record yields a sent receipt. Different content holds a conflict. Only an explicit PDS `RecordNotFound` permits another guarded write. Failed reads never mean absence. Sent receipts are terminal even if someone deletes the remote post.
 
@@ -52,6 +54,6 @@ No process sleeps to pace sends. At the default 15-minute wakeup interval, norma
 
 ## Limitations
 
-Current-state polling observes only states present at successful scans. `action_date` is the current status date, not proof of the original approval date. Administrative-adjustment semantics and the City's timestamp timezone remain unverified. Building-permit detection, cross-dataset address matching, Threads, media, a dashboard, and property-level consolidation are deferred.
+Current-state polling observes only states present at successful scans. `action_date` is the current status date, not proof of the original approval date. Administrative-adjustment semantics and the City's timestamp timezone remain unverified. Building-permit detection, cross-dataset address matching, Threads, a dashboard, and property-level consolidation are deferred. The dataset does not distinguish attic and garden apartments; conversion-unit announcements use “ADU apartment.” Street View can predate the application and may not show a rear coach house; it is context, not evidence of completed construction.
 
 A backup older than a remote write cannot independently reconstruct that lost delivery identity. Restores are paused and require external reconciliation; no distributed exactly-once claim is made.

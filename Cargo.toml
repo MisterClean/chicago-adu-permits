@@ -11,6 +11,9 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 clap = { version = "4", features = ["derive"] }
 fs2 = "0.4"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+tiny-skia = "0.11"
 httpdate = "1"
 rand = "0.9"
 rusqlite = { version = "0.40", features = ["bundled", "backup"] }

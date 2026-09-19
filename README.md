@@ -14,6 +14,7 @@ cp config.example.toml config.toml
 ./target/release/adu-bot --config config.toml ingest
 ./target/release/adu-bot --config config.toml status --json
 ./target/release/adu-bot --config config.toml preview --application-id 955045
+./target/release/adu-bot --config config.toml preview --application-id 955045 --image state/preview.jpg
 ./target/release/adu-bot --config config.toml publish --dry-run
 ```
 
@@ -21,7 +22,19 @@ The first complete scan establishes the baseline and suppresses existing preappr
 
 Use a dedicated Bluesky account and a revocable **app password**. Configure the account DID and optionally its handle in `[bluesky]`. Supply the password through `BLUESKY_APP_PASSWORD` or a protected file, and optionally set `SOCRATA_APP_TOKEN`. The CLI does not automatically load `.env` files. The PDS advertised in authenticated session identity is used for record operations. Sessions are persisted privately with rotated access and refresh tokens. Run `adu-bot --config config.toml adapter check` to verify credentials without posting.
 
-Publishing remains disabled until `publish_enabled = true` is explicitly configured. Complete the [authenticated acceptance gate](docs/operations.md#authenticated-release-gate) on an authorized test account before enabling production. No public posts were made during implementation.
+Publishing remains disabled until `publish_enabled = true` is explicitly configured. See the [authenticated acceptance gate](docs/operations.md#authenticated-release-gate) before enabling production.
+
+## Announcement cards
+
+Post text is exactly “New ADU preapproved,” a blank line, and a linked “Data Portal Record.” Application details and the building-permit distinction remain in the card and alt text. Every newly prepared post includes an application-rendered **3200 × 4000** portrait JPEG, detailed alt text, the project address, requested home count, ward, preapproval date, and a link to the single city record. The headline uses plain language: **New coach house**, **ADU apartment(s)**, or **Coach house + apartments**. The current dataset has no project description or reliable floor designation, so the bot does not guess garden/basement or attic apartments. Unknown/invalid type flags use **Additional home(s)**. All posts distinguish housing preapproval from a building permit.
+
+Cards use bundled Big Shoulders Bold and Roboto, black/white, Chicago flag blue (`#41B6E6`), and star red (`#E4002B`), following the [Chicago typography](https://design.chicago.gov/typography/) and [color guidance](https://design.chicago.gov/basics/). The feed is labeled unofficial. The lower panel shows Google Street View requested by project address, keeping the entire photograph and Google's attribution visible. It is street-facing context, not a rendering of the proposed unit.
+
+Set `GOOGLE_MAPS_API_KEY` or `[media].google_api_key_file` to a protected file containing the key. The CLI does not load `.env` automatically. Street View API access and billing must be enabled. Google's standard API returns up to 640 pixels per side; the card uses a 640 × 360 photo enlarged to its panel, while text renders at native resolution. Missing imagery, credentials, or upload errors stop that announcement instead of sending text alone.
+
+The renderer selects the highest JPEG quality within [Bluesky's 2,000,000-byte / 4,000-pixel limits](https://github.com/bluesky-social/social-app/blob/main/src/lib/constants.ts). It uploads the image before freezing the post's blob reference, alt text and aspect ratio in the durable outbox. Retries reuse that frozen record; existing already-prepared version-1 records retain their original text-only payloads.
+
+`preview --image PATH.jpg` writes the JPEG and sibling `PATH.alt.txt` without posting or authenticating to Bluesky. It requires Google credentials; ordinary text previews and `publish --dry-run` remain offline. New rendering dependencies are native Rust libraries; fonts are embedded in the binary.
 
 ## Commands
 
@@ -34,7 +47,7 @@ Publishing remains disabled until `publish_enabled = true` is explicitly configu
 | `publish --dry-run` | Render pending event evidence; no authentication, sends, or receipt changes |
 | `publish` | Attempt due deliveries, subject to configuration and safety gates |
 | `status --json` | Source freshness, baseline, changes, issues, event and delivery counts |
-| `preview --application-id ID` | Render current application facts without queueing |
+| `preview --application-id ID [--image PATH.jpg]` | Render current application facts and optionally a Street View card without queueing |
 | `queue list` | List decisions, including historical suppressions and holds |
 | `queue inspect EVENT_KEY` | Inspect initial/current/approved evidence, frozen records, reviews, and receipts |
 | `queue approve EVENT_KEY --reason TEXT` | Explicitly approve current qualifying evidence |

@@ -159,12 +159,12 @@ fn rendering_handles_unicode_both_flags_zero_units_and_long_addresses() {
         render::validate(&record).unwrap();
         let text = record["text"].as_str().unwrap();
         assert!(!text.contains("Requested: 0"));
-        assert!(text.contains("Building permit still required"));
+        assert_eq!(text, "New ADU preapproved\n\nData Portal Record");
         let facet = &record["facets"][0]["index"];
         assert_eq!(
             &text[facet["byteStart"].as_u64().unwrap() as usize
                 ..facet["byteEnd"].as_u64().unwrap() as usize],
-            "City record"
+            "Data Portal Record"
         );
     }
 }
@@ -334,6 +334,8 @@ struct FakePublisher {
     sends: usize,
     ambiguous: bool,
     conflict: bool,
+    preparation_error: bool,
+    prepared_units: Option<i64>,
 }
 impl FakePublisher {
     fn new() -> Self {
@@ -342,6 +344,8 @@ impl FakePublisher {
             sends: 0,
             ambiguous: false,
             conflict: false,
+            preparation_error: false,
+            prepared_units: None,
         }
     }
 }
@@ -358,7 +362,11 @@ impl Publisher for FakePublisher {
     fn template_version(&self) -> i64 {
         1
     }
-    fn prepare(&self, o: &Observation) -> Result<Value> {
+    fn prepare(&mut self, o: &Observation) -> Result<Value> {
+        if self.preparation_error {
+            anyhow::bail!("Street View unavailable");
+        }
+        self.prepared_units = o.number("adu_applying_for");
         render::record(o, Utc::now())
     }
     fn reconcile(
@@ -488,12 +496,7 @@ fn correction_holds_first_send_and_review_uses_current_evidence() {
     .unwrap();
     publish::publish(&mut s, &c, &mut p).unwrap();
     assert_eq!(p.sends, 1);
-    assert!(
-        p.remote.unwrap().1["text"]
-            .as_str()
-            .unwrap()
-            .contains("Requested: 2")
-    );
+    assert_eq!(p.prepared_units, Some(2));
 }
 #[test]
 fn foreign_keys_and_platform_account_uniqueness_are_enforced() {
@@ -590,5 +593,35 @@ fn corrupted_frozen_payload_fails_closed() {
     assert!(publish::publish(&mut s, &c, &mut p).is_err());
     s.db.execute("UPDATE deliveries SET next_attempt=0,record_json=json_set(record_json,'$.text','unexpected change')",[]).unwrap();
     assert!(publish::publish(&mut s, &c, &mut p).is_err());
+    assert_eq!(p.sends, 1);
+}
+
+#[test]
+fn preparation_failure_defers_without_freezing_or_blocking_evidence_review() {
+    let (_dir, mut s, c) = publishing_fixture();
+    let mut p = FakePublisher::new();
+    p.preparation_error = true;
+    assert!(publish::publish(&mut s, &c, &mut p).is_err());
+    assert_eq!(p.sends, 0);
+    let (state, attempts, key, due): (String, i64, Option<String>, i64) =
+        s.db.query_row(
+            "SELECT state,attempts,record_key,next_attempt FROM deliveries",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "retry");
+    assert_eq!(attempts, 0);
+    assert!(key.is_none());
+    assert!(due > now());
+    queue::review(
+        &mut s,
+        &events::key("1"),
+        "approve",
+        "Confirmed current evidence after image failure",
+    )
+    .unwrap();
+    p.preparation_error = false;
+    publish::publish(&mut s, &c, &mut p).unwrap();
     assert_eq!(p.sends, 1);
 }

@@ -7,84 +7,62 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use unicode_segmentation::UnicodeSegmentation;
 
-pub const TEMPLATE_VERSION: i64 = 1;
-pub fn record(obs: &Observation, created_at: DateTime<Utc>) -> Result<Value> {
+pub const TEMPLATE_VERSION: i64 = 3;
+
+/// Only name a specific kind when supported by the source's typed flags.
+/// This dataset has no project description or reliable floor designation.
+pub fn unit_name(obs: &Observation) -> &'static str {
+    let plural = obs.number("adu_applying_for").is_some_and(|n| n > 1);
+    if obs.canonical["coach_house"].is_object() || obs.canonical["conversion_unit"].is_object() {
+        return if plural {
+            "Additional homes"
+        } else {
+            "Additional home"
+        };
+    }
+    match (
+        obs.canonical["coach_house"].as_bool(),
+        obs.canonical["conversion_unit"].as_bool(),
+    ) {
+        (Some(true), Some(true)) => "Coach house + apartments",
+        (Some(true), Some(false) | None) => "Coach house",
+        (Some(false) | None, Some(true)) if plural => "ADU apartments",
+        (Some(false) | None, Some(true)) => "ADU apartment",
+        _ if plural => "Additional homes",
+        _ => "Additional home",
+    }
+}
+pub fn clean(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+pub fn address(obs: &Observation) -> String {
+    obs.text("address")
+        .map(clean)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Application {}", obs.id))
+}
+pub fn status_date(obs: &Observation) -> Option<String> {
+    source_date(&obs.canonical["action_date"]).map(|d| d.format("%b %-d, %Y").to_string())
+}
+pub fn source_url(obs: &Observation) -> Result<url::Url> {
     let mut link = url::Url::parse(&format!(
         "https://data.cityofchicago.org/resource/{DATASET}.json"
     ))?;
     link.query_pairs_mut()
         .append_pair("$select", &select())
         .append_pair("$where", &format!("id = {}", obs.id));
-    let clean = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-    for level in 0..=4 {
-        let mut lines = vec!["Chicago ADU preapproval".to_string()];
-        let mut location = if level < 4 {
-            obs.text("address").map(clean).filter(|s| !s.is_empty())
-        } else {
-            None
-        }
-        .unwrap_or_else(|| format!("Application {}", obs.id));
-        if level < 1
-            && let Some(ward) = obs.number("ward").filter(|w| (1..=50).contains(w))
-        {
-            location.push_str(&format!(" · Ward {ward}"));
-        }
-        lines.push(location);
-        lines.push(format!(
-            "City now lists application {} as pre-certified.",
-            obs.id
-        ));
-        let kind = if level < 2
-            && !obs.canonical["coach_house"].is_object()
-            && !obs.canonical["conversion_unit"].is_object()
-        {
-            match (
-                obs.canonical["coach_house"].as_bool(),
-                obs.canonical["conversion_unit"].as_bool(),
-            ) {
-                (Some(true), Some(true)) => Some("Coach house and conversion units"),
-                (Some(true), _) => Some("Coach house"),
-                (_, Some(true)) => Some("Conversion units"),
-                _ => None,
-            }
-        } else {
-            None
-        };
-        if let Some(units) = obs.number("adu_applying_for").filter(|n| *n > 0) {
-            let mut requested = format!(
-                "Requested: {units} {}",
-                if units == 1 { "ADU" } else { "ADUs" }
-            );
-            if let Some(kind) = kind {
-                requested.push_str(&format!(" · {kind}"));
-            }
-            lines.push(requested);
-        } else if let Some(kind) = kind {
-            lines.push(kind.into());
-        }
-        let date = if level < 3 {
-            source_date(&obs.canonical["action_date"])
-        } else {
-            None
-        };
-        lines.push(match date {
-            Some(d) => format!(
-                "Status dated {}. Building permit still required.",
-                d.format("%b %-d, %Y")
-            ),
-            None => "Building permit still required.".into(),
-        });
-        lines.push("City record".into());
-        let text = lines.join("\n");
-        if text.graphemes(true).count() <= 300 && text.len() <= 3000 {
-            let start = text.len() - "City record".len();
-            return Ok(
-                json!({"$type":"app.bsky.feed.post","text":text,"createdAt":created_at.to_rfc3339_opts(SecondsFormat::Millis,true),"langs":["en"],"facets":[{"index":{"byteStart":start,"byteEnd":text.len()},"features":[{"$type":"app.bsky.richtext.facet#link","uri":link.as_str()}]}]}),
-            );
-        }
-    }
-    anyhow::bail!("required post text exceeds platform limits")
+    Ok(link)
 }
+pub fn record(obs: &Observation, created_at: DateTime<Utc>) -> Result<Value> {
+    let link = source_url(obs)?;
+    let label = "Data Portal Record";
+    let text = format!("New ADU preapproved\n\n{label}");
+    let start = text.len() - label.len();
+    Ok(
+        json!({"$type":"app.bsky.feed.post","text":text,"createdAt":created_at.to_rfc3339_opts(SecondsFormat::Millis,true),"langs":["en"],"facets":[{"index":{"byteStart":start,"byteEnd":text.len()},"features":[{"$type":"app.bsky.richtext.facet#link","uri":link.as_str()}]}]}),
+    )
+}
+
 pub fn validate(record: &Value) -> Result<()> {
     let text = record["text"]
         .as_str()
@@ -110,6 +88,38 @@ pub fn validate(record: &Value) -> Result<()> {
                 && text.is_char_boundary(end),
             "invalid facet bounds"
         );
+    }
+    if let Some(embed) = record.get("embed") {
+        ensure!(
+            embed["$type"] == "app.bsky.embed.images",
+            "unexpected image embed"
+        );
+        let images = embed["images"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing images"))?;
+        ensure!(images.len() == 1, "expected one announcement card");
+        for image in images {
+            ensure!(
+                image["alt"].as_str().is_some_and(|s| !s.trim().is_empty()),
+                "image requires alt text"
+            );
+            ensure!(
+                image["image"]["$type"] == "blob"
+                    && image["image"]["mimeType"] == "image/jpeg"
+                    && image["image"]["size"]
+                        .as_u64()
+                        .is_some_and(|n| n > 0 && n <= crate::media::MAX_IMAGE_BYTES as u64)
+                    && image["image"]["ref"]["$link"]
+                        .as_str()
+                        .is_some_and(|s| !s.is_empty()),
+                "invalid image blob"
+            );
+            ensure!(
+                image["aspectRatio"]["width"] == crate::media::WIDTH
+                    && image["aspectRatio"]["height"] == crate::media::HEIGHT,
+                "invalid card dimensions"
+            );
+        }
     }
     Ok(())
 }

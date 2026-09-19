@@ -1,5 +1,6 @@
 use adu_bot::{
     config::Config,
+    media,
     publish::{self, bluesky::Bluesky},
     queue, render,
     source::{self, Socrata},
@@ -35,6 +36,9 @@ enum Command {
     Preview {
         #[arg(long)]
         application_id: String,
+        /// Write a full-resolution JPEG and sibling .alt.txt. Fetches Street View; does not post.
+        #[arg(long)]
+        image: Option<PathBuf>,
     },
     Queue {
         #[command(subcommand)]
@@ -125,13 +129,29 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             }
         }
-        Command::Preview { application_id } => println!(
-            "{}",
-            serde_json::to_string_pretty(&render::record(
-                &store.application(&application_id)?,
-                chrono::Utc::now()
-            )?)?
-        ),
+        Command::Preview {
+            application_id,
+            image,
+        } => {
+            let observation = store.application(&application_id)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&render::record(&observation, chrono::Utc::now())?)?
+            );
+            if let Some(path) = image {
+                let card = media::render(&config, &observation)?;
+                std::fs::write(&path, &card.bytes)?;
+                std::fs::write(path.with_extension("alt.txt"), &card.alt)?;
+                eprintln!(
+                    "Card: {} ({} × {}, {} bytes, JPEG quality {})",
+                    path.display(),
+                    media::WIDTH,
+                    media::HEIGHT,
+                    card.bytes.len(),
+                    card.quality
+                );
+            }
+        }
         Command::Backup { destination } => store.backup(&destination)?,
         Command::Queue { action } => match action {
             QueueCommand::List => {

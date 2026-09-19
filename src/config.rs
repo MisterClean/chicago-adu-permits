@@ -22,6 +22,13 @@ pub struct Config {
     pub min_send_interval_seconds: i64,
     pub max_run_seconds: u64,
     pub bluesky: BlueskyConfig,
+    pub media: MediaConfig,
+}
+#[derive(Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaConfig {
+    /// Otherwise read GOOGLE_MAPS_API_KEY from the environment.
+    pub google_api_key_file: Option<PathBuf>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -56,6 +63,7 @@ impl Default for Config {
             min_send_interval_seconds: 60,
             max_run_seconds: 720,
             bluesky: BlueskyConfig::default(),
+            media: MediaConfig::default(),
         }
     }
 }

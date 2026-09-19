@@ -18,3 +18,8 @@ max_run_seconds = 720
 pds = "https://bsky.social"
 # Alternative to BLUESKY_APP_PASSWORD; file should be readable only by the service user.
 # app_password_file = "/etc/adu-bot/app-password"
+
+[media]
+# Required for every new announcement: use GOOGLE_MAPS_API_KEY in the environment,
+# or a protected file containing only the key (not a whole .env file).
+# google_api_key_file = "/etc/adu-bot/google-maps-api-key"

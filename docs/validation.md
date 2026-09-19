@@ -68,3 +68,32 @@ On the Linux deployment host, repeat the synthetic benchmark in a transient syst
 - Multi-day source cadence/identifier stability observation and live account/PDS migration.
 
 Publishing is disabled by default. See the [operating runbook](operations.md) for enabling it only after the required checks.
+
+## Announcement cards (2026-09-19)
+
+Template v2 adds native 3200 × 4000 cards, Google Street View, Big Shoulders/Roboto, plain-language headlines, and accessible image embeds. The earlier memory measurements above describe text-only v1. The service now specifies `MemoryMax=256M`; an enforced Linux cgroup measurement is still pending.
+
+- `cargo test --locked`: 45 tests passed, including type fallback, missing/invalid flags, requested counts, alt text, full-resolution JPEG decoding, byte-limit/quality selection, binary upload, expired-token recovery, and image preparation failure without a text-only send.
+- `cargo fmt --check`, strict all-target Clippy, release build, and `git diff --check` passed.
+- All 471 current qualifying city observations passed offline text/facet validation.
+- Visual inspection covered coach-house and conversion-apartment cards. Their JPEGs are 1,871,556 bytes at quality 94 and 1,900,115 bytes at quality 93. Both retain 3200 × 4000 dimensions and all Google attribution.
+- A release-mode coach-house publish completed in 4.44 seconds with 161,153,024 bytes (153.7 MiB) peak RSS on this ARM64 Mac. These are single-run measurements, not Linux-cap certification.
+- Live testing exposed and fixed the existing refresh request body: `refreshSession` expects an empty POST, and `ExpiredToken` can arrive with HTTP 400. Regression coverage now checks both.
+- User-authorized posts on the configured account exercise upload, guarded post creation, and browser rendering. Authoritative `getRecord` is checked against frozen JSON, including image blob, alt text and aspect ratio. Live destructive conflict/crash simulations remain outside this design review.
+
+Bluesky limits: https://github.com/bluesky-social/social-app/blob/main/src/lib/constants.ts and https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/embed/images.json.
+Chicago brand: https://design.chicago.gov/typography/ and https://design.chicago.gov/basics/.
+Google's standard photo size: https://developers.google.com/maps/documentation/streetview/usage-and-billing.
+
+Live design-review posts (the user may delete these after review):
+
+- Coach house, application 955045: https://bsky.app/profile/chiadupreapprovals.bsky.social/post/3mvv7ibtz6ow5
+- Apartment, application 954542: https://bsky.app/profile/chiadupreapprovals.bsky.social/post/3mvv7jui6pmvs
+
+Both authoritative records matched their frozen outbox records exactly. Both post records include a 3200 × 4000 image and nonempty alt text (617 / 752 characters). Regular local publishing remains disabled; the temporary test configuration was disabled after the two sends. The rest of the baseline remains suppressed.
+
+## Simplified copy revision (template v3)
+
+Following the live review, post text is exactly `New ADU preapproved\n\nData Portal Record`, with the final label linked to the same application-specific data portal URL. The card masthead “CHICAGO / MORE HOMES” is removed; conversion headlines now say “ADU APARTMENT” (plural when appropriate). Application details and the permit qualification remain on the card and in alt text.
+
+All 45 tests, strict Clippy, and the release build pass. The revised Sheffield card is 3200 × 4000, 1,878,629 bytes, JPEG quality 93. A separate user-authorized design-review post was created and read back against its frozen local review record without changing the production event receipts: https://bsky.app/profile/chiadupreapprovals.bsky.social/post/3mvv7z2e5ry22. Automatic publishing remains disabled.

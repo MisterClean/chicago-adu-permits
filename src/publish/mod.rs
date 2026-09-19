@@ -51,7 +51,7 @@ pub struct DeliveryIdentity {
 pub trait Publisher {
     fn platform(&self) -> &'static str;
     fn account(&self) -> &str;
-    fn prepare(&self, observation: &Observation) -> Result<Value>;
+    fn prepare(&mut self, observation: &Observation) -> Result<Value>;
     fn allocate_identity(&self, previous_clock: i64) -> Result<DeliveryIdentity>;
     fn template_version(&self) -> i64;
     fn reconcile(
@@ -166,7 +166,27 @@ pub fn publish(store: &mut Store, config: &Config, publisher: &mut impl Publishe
                 continue;
             }
             let obs:String=store.db.query_row("SELECT v.observation FROM events e JOIN application_versions v ON v.dataset_id=e.dataset_id AND v.application_id=e.application_id AND v.version=e.evidence_version WHERE event_key=?1",[&event],|r|r.get(0))?;
-            let record = publisher.prepare(&serde_json::from_str(&obs)?)?;
+            let observation = serde_json::from_str(&obs)?;
+            let record = match publisher.prepare(&observation) {
+                Ok(record) => record,
+                Err(error) => {
+                    let fallback = DeliveryError::Retry {
+                        message: format!("prepare announcement: {error}"),
+                        after: None,
+                    };
+                    delivery_error(
+                        store,
+                        id,
+                        publisher,
+                        error.downcast_ref::<DeliveryError>().unwrap_or(&fallback),
+                        // Blob uploads cannot create posts. Keep evidence reviewable
+                        // until the first putRecord attempt actually begins.
+                        attempts,
+                    )?;
+                    failed = true;
+                    continue;
+                }
+            };
             let tx = store.db.transaction()?;
             let last: i64 = tx.query_row(
                 "SELECT last_identity_clock FROM adapter_state WHERE platform=?1 AND account_id=?2",

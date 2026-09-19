@@ -10,7 +10,9 @@ Keep `/etc/adu-bot/credentials.env` mode 0600, owned by root (systemd reads it b
 
 Run the initial ingest as the service user, inspect `status --json`, and preview several known applications. The initial 471 qualifying rows observed during implementation were suppressed; your initial count may differ. Never reset the database to clear a queue.
 
-After the authenticated test gate, set the production DID and credentials, explicitly set `publish_enabled = true`, then enable `adu-bot.timer`. Use `journalctl -u adu-bot.service` for structured ingestion/errors. The service's 64 MiB cap is provisional until validated on your Linux host. Its 13-minute outer timeout bounds the invocation even if a network call extends beyond the application's 12-minute work budget.
+Provide `GOOGLE_MAPS_API_KEY` in the credentials environment or a protected `[media].google_api_key_file`; use a key with Street View Static API enabled. `preview --application-id ID --image /path/card.jpg` verifies fetching, rendering, and alt text without posting. The Google key is never included in post records or logged request URLs. Missing imagery and network errors defer the announcement; the bot does not silently publish text alone.
+
+After the authenticated test gate, set the production DID and credentials, explicitly set `publish_enabled = true`, then enable `adu-bot.timer`. Use `journalctl -u adu-bot.service` for structured ingestion/errors. The service's 256 MiB cap accommodates native 3200 × 4000 rendering; validate it on your Linux host (a local macOS image preparation/upload attempt measured about 156 MiB peak RSS). Its 13-minute outer timeout bounds the invocation even if a network call extends beyond the application's 12-minute work budget.
 
 The timer wakes every 15 minutes with jitter. Successful ingestion makes the next scan due six hours later; failed scans are retried from page one on a later invocation. `run` still attempts safe reconciliation if ingestion fails; ingestion does not depend on Bluesky availability. Work is paced across invocations without sleeping. The default timer therefore normally sends at most one new announcement each wakeup; change the wakeup interval if higher throughput is needed while preserving the 60-second send minimum.
 
@@ -53,7 +55,7 @@ Do not prune event keys, versions, or sent receipts. Deleting state destroys dup
 
 ## Authenticated release gate
 
-The posting portion of this gate requires an explicitly authorized dedicated test account and has **not been run**. App-password login and returned DID/PDS verification passed with `adapter check`, which creates no posts. Mock HTTP tests do not certify actual PDS write semantics.
+The full release gate below remains incomplete. The user-authorized card review on 2026-09-19 exercised live image upload, guarded creation, authoritative record equality, token refresh, and browser rendering on the configured account. Live conflict/crash simulations have not been run. Mock HTTP tests do not certify all actual PDS write semantics.
 
 Use a separate state directory and test account DID. Authorize and review a single application event or a controlled test fixture. Verify:
 

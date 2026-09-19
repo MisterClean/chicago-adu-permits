@@ -45,9 +45,12 @@ fn publisher(url: &str) -> (TempDir, Bluesky) {
     config.bluesky.app_password_file = Some(secret);
     (dir, Bluesky::new(&config).unwrap())
 }
-fn record(p: &Bluesky) -> Value {
-    p.prepare(&Observation::parse(json!({"id":"123","status":"Pre-Certified"})).unwrap())
-        .unwrap()
+fn record(_p: &Bluesky) -> Value {
+    adu_bot::render::record(
+        &Observation::parse(json!({"id":"123","status":"Pre-Certified"})).unwrap(),
+        chrono::Utc::now(),
+    )
+    .unwrap()
 }
 #[test]
 fn actual_http_put_uses_explicit_null_and_reconcile_compares_frozen_record() {
@@ -93,9 +96,11 @@ fn expired_access_refreshes_with_refresh_token_and_persists_rotation() {
     let record = record(&p);
     let worker = thread::spawn(move || {
         reply(request(&s), 200, session());
-        reply(request(&s), 401, json!({"error":"ExpiredToken"}));
+        reply(request(&s), 400, json!({"error":"ExpiredToken"}));
         let r = request(&s);
         assert!(r.url().contains("refreshSession"));
+        assert_eq!(r.body_length(), Some(0));
+        assert!(!r.headers().iter().any(|h| h.field.equiv("Content-Type")));
         assert!(
             r.headers().iter().any(
                 |h| h.field.equiv("Authorization") && h.value.as_str() == "Bearer test-refresh"
@@ -382,5 +387,104 @@ fn auth_check_logs_in_without_publishing_or_exposing_tokens() {
     assert_eq!(result["did"], "did:plc:test");
     assert!(!result.to_string().contains("test-access"));
     assert!(!result.to_string().contains("test-refresh"));
+    worker.join().unwrap();
+}
+
+#[test]
+fn image_upload_refreshes_auth_and_preserves_blob_and_alt_in_post() {
+    let (s, url) = server();
+    let (_dir, mut p) = publisher(&url);
+    let mut record = record(&p);
+    let bytes = vec![255, 216, 255, 217];
+    let expected = bytes.clone();
+    let worker = thread::spawn(move || {
+        reply(request(&s), 200, session());
+        for attempt in 0..2 {
+            let mut r = request(&s);
+            assert!(r.url().ends_with("uploadBlob"));
+            assert!(
+                r.headers()
+                    .iter()
+                    .any(|h| h.field.equiv("Content-Type") && h.value.as_str() == "image/jpeg")
+            );
+            let mut actual = Vec::new();
+            r.as_reader().read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, expected);
+            if attempt == 0 {
+                reply(r, 401, json!({"error":"ExpiredToken"}));
+                let r = request(&s);
+                assert!(r.url().contains("refreshSession"));
+                reply(r, 200, session());
+            } else {
+                reply(
+                    r,
+                    200,
+                    json!({"blob":{"$type":"blob","mimeType":"image/jpeg","size":4,"ref":{"$link":"image-cid"}}}),
+                );
+            }
+        }
+        let mut r = request(&s);
+        assert!(r.url().contains("putRecord"));
+        let value: Value = serde_json::from_reader(r.as_reader()).unwrap();
+        assert_eq!(
+            value["record"]["embed"]["images"][0]["image"]["ref"]["$link"],
+            "image-cid"
+        );
+        assert_eq!(
+            value["record"]["embed"]["images"][0]["alt"],
+            "Permit preapproval card"
+        );
+        assert_eq!(
+            value["record"]["embed"]["images"][0]["aspectRatio"],
+            json!({"width":3200,"height":4000})
+        );
+        reply(
+            r,
+            200,
+            json!({"uri":"at://did:plc:test/app.bsky.feed.post/key","cid":"record-cid"}),
+        );
+    });
+    p.attach_image(
+        &mut record,
+        &adu_bot::media::PostImage {
+            bytes,
+            alt: "Permit preapproval card".into(),
+            quality: 100,
+        },
+    )
+    .unwrap();
+    p.send("key", &record).unwrap();
+    worker.join().unwrap();
+}
+
+#[test]
+fn rejected_upload_never_creates_a_text_only_post() {
+    let (s, url) = server();
+    let (_dir, mut p) = publisher(&url);
+    let mut record = record(&p);
+    let worker = thread::spawn(move || {
+        reply(request(&s), 200, session());
+        reply(request(&s), 429, json!({"error":"RateLimitExceeded"}));
+        assert!(
+            s.recv_timeout(Duration::from_millis(100))
+                .unwrap()
+                .is_none()
+        );
+    });
+    let error = p
+        .attach_image(
+            &mut record,
+            &adu_bot::media::PostImage {
+                bytes: vec![1, 2],
+                alt: "Card".into(),
+                quality: 100,
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<DeliveryError>(),
+        Some(DeliveryError::Retry { .. })
+    ));
+    assert!(record.get("embed").is_none());
     worker.join().unwrap();
 }

@@ -1,6 +1,7 @@
 use super::{DeliveryError, DeliveryIdentity, Publisher, Receipt, Reconciliation};
 use crate::{
     config::{Config, secure_url},
+    media::{self, PostImage},
     normalize::Observation,
     render,
     store::now,
@@ -59,6 +60,67 @@ impl Bluesky {
             .context("missing authenticated session")?;
         Ok(json!({"authenticated": true, "did": session.did, "pds": session.pds}))
     }
+    /// Upload the finished JPEG before freezing the post's immutable blob reference.
+    pub fn attach_image(&mut self, record: &mut Value, image: &PostImage) -> Result<()> {
+        ensure!(
+            !image.bytes.is_empty() && image.bytes.len() <= media::MAX_IMAGE_BYTES,
+            "invalid image size"
+        );
+        self.recovered = false;
+        self.authenticate()?;
+        let mut response = self.upload(&image.bytes)?;
+        if matches!(Self::classify(&response), DeliveryError::Auth) {
+            self.refresh()?;
+            response = self.upload(&image.bytes)?;
+        }
+        if response.status != 200 {
+            return Err(Self::classify(&response).into());
+        }
+        let blob = &response.value["blob"];
+        ensure!(
+            blob["size"].as_u64() == Some(image.bytes.len() as u64),
+            "uploaded blob size mismatch"
+        );
+        record["embed"] = image.embed(blob.clone());
+        render::validate(record)?;
+        Ok(())
+    }
+    fn upload(&self, bytes: &[u8]) -> std::result::Result<Response, DeliveryError> {
+        let session = self.session.as_ref().ok_or(DeliveryError::Auth)?;
+        let mut response = self
+            .agent
+            .post(format!(
+                "{}/xrpc/com.atproto.repo.uploadBlob",
+                session.pds.trim_end_matches('/')
+            ))
+            .header("Authorization", format!("Bearer {}", session.access_jwt))
+            .header("Content-Type", "image/jpeg")
+            .send(bytes)
+            .map_err(|_| DeliveryError::Retry {
+                message: "image upload transport failed".into(),
+                after: None,
+            })?;
+        let status = response.status().as_u16();
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok());
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(2 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|_| DeliveryError::Retry {
+                message: "incomplete image upload response".into(),
+                after: retry_after,
+            })?;
+        Ok(Response {
+            status,
+            value: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            retry_after,
+        })
+    }
     fn session_path(&self) -> PathBuf {
         self.config.state_dir.join("bluesky-session.json")
     }
@@ -73,12 +135,15 @@ impl Bluesky {
         let mut url = url::Url::parse(&format!("{}/xrpc/{method}", pds.trim_end_matches('/')))
             .map_err(|_| DeliveryError::Auth)?;
         url.query_pairs_mut().extend_pairs(query.iter().copied());
-        let response = if let Some(body) = body {
+        let response = if body.is_some() || method == "com.atproto.server.refreshSession" {
             let mut req = self.agent.post(url.as_str());
             if let Some(token) = token {
                 req = req.header("Authorization", format!("Bearer {token}"));
             }
-            req.send_json(body)
+            match body {
+                Some(body) => req.send_json(body),
+                None => req.send_empty(),
+            }
         } else {
             let mut req = self.agent.get(url.as_str());
             if let Some(token) = token {
@@ -245,7 +310,7 @@ impl Bluesky {
             &pds,
             "com.atproto.server.refreshSession",
             &[],
-            Some(&json!({})),
+            None,
             Some(&session.refresh_jwt),
         )?;
         if response.status != 200 {
@@ -308,7 +373,7 @@ impl Bluesky {
         let response =
             self.request(&session.pds, method, query, body, Some(&session.access_jwt))?;
         // Authentication recovery is bounded. Subsequent failures pause the adapter.
-        if response.status == 401 {
+        if matches!(Self::classify(&response), DeliveryError::Auth) {
             self.refresh()?;
             let session = self.session.as_ref().ok_or(DeliveryError::Auth)?;
             return self.request(&session.pds, method, query, body, Some(&session.access_jwt));
@@ -350,8 +415,10 @@ impl Publisher for Bluesky {
     fn template_version(&self) -> i64 {
         render::TEMPLATE_VERSION
     }
-    fn prepare(&self, observation: &Observation) -> Result<Value> {
-        let record = render::record(observation, chrono::Utc::now())?;
+    fn prepare(&mut self, observation: &Observation) -> Result<Value> {
+        let mut record = render::record(observation, chrono::Utc::now())?;
+        let image = media::render(&self.config, observation)?;
+        self.attach_image(&mut record, &image)?;
         render::validate(&record).context("validate Bluesky post")?;
         Ok(record)
     }
