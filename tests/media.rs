@@ -19,8 +19,8 @@ fn headlines_follow_flags_without_inventing_a_floor_or_unit_count() {
         assert_eq!(render::unit_name(&o), name);
         let record = render::record(&o, chrono::Utc::now()).unwrap();
         let text = record["text"].as_str().unwrap();
-        assert_eq!(text, "New ADU preapproved\n\nData Portal Record");
-        assert!(!text.contains("Requested: 0"));
+        render::validate(&record).unwrap();
+        assert!(!text.contains("0 ADUs"));
     }
 }
 #[test]

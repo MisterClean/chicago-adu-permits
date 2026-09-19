@@ -178,6 +178,7 @@ impl Observation {
             "adu_applying_for",
             "coach_house",
             "conversion_unit",
+            "submission_date",
             "action_date",
         ];
         fields

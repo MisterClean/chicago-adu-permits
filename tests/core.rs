@@ -159,7 +159,10 @@ fn rendering_handles_unicode_both_flags_zero_units_and_long_addresses() {
         render::validate(&record).unwrap();
         let text = record["text"].as_str().unwrap();
         assert!(!text.contains("Requested: 0"));
-        assert_eq!(text, "New ADU preapproved\n\nData Portal Record");
+        assert_eq!(
+            text,
+            "New ADU preapproved\n\nType: Coach house + conversion.\n\nData Portal Record"
+        );
         let facet = &record["facets"][0]["index"];
         assert_eq!(
             &text[facet["byteStart"].as_u64().unwrap() as usize
@@ -167,6 +170,119 @@ fn rendering_handles_unicode_both_flags_zero_units_and_long_addresses() {
             "Data Portal Record"
         );
     }
+}
+#[test]
+fn post_copy_describes_requested_units_types_and_calendar_days() {
+    for (coach, conversion, count, details) in [
+        (
+            false,
+            true,
+            2,
+            "2 ADUs proposed for the property.\nType: Conversion.",
+        ),
+        (
+            true,
+            false,
+            1,
+            "1 ADU proposed for the property.\nType: Coach house.",
+        ),
+        (
+            true,
+            true,
+            3,
+            "3 ADUs proposed for the property.\nType: Coach house + conversion.",
+        ),
+        (false, false, 2, "2 ADUs proposed for the property."),
+    ] {
+        let observation = Observation::parse(json!({
+            "id": 1, "status": "Pre-Certified", "coach_house": coach,
+            "conversion_unit": conversion, "adu_applying_for": count,
+            "submission_date": "2024-02-28T23:59:00.000",
+            "action_date": "2024-03-01T00:00:00.000"
+        }))
+        .unwrap();
+        let record = render::record(&observation, Utc::now()).unwrap();
+        render::validate(&record).unwrap();
+        assert_eq!(
+            record["text"],
+            format!(
+                "New ADU preapproved\n\n{details}\n\nPreapproved 2 days after submission.\n\nData Portal Record"
+            )
+        );
+    }
+}
+#[test]
+fn post_copy_omits_unknown_counts_and_types() {
+    for count in [
+        Value::Null,
+        json!(0),
+        json!(-1),
+        json!("invalid"),
+        json!("1.5"),
+    ] {
+        let observation = Observation::parse(json!({
+            "id": 1, "status": "Pre-Certified", "adu_applying_for": count,
+            "coach_house": "true", "conversion_unit": "true"
+        }))
+        .unwrap();
+        let record = render::record(&observation, Utc::now()).unwrap();
+        assert_eq!(record["text"], "New ADU preapproved\n\nData Portal Record");
+    }
+}
+#[test]
+fn preapproval_duration_handles_missing_invalid_reversed_and_adjustment_dates() {
+    for (status, submitted, action, duration) in [
+        (
+            "Pre-Certified",
+            "2026-01-01T00:00:00",
+            "2026-01-01T00:00:00",
+            Some("0 days"),
+        ),
+        (
+            "Pre-Certified",
+            "2026-01-01T00:00:00",
+            "2026-01-02T00:00:00",
+            Some("1 day"),
+        ),
+        (
+            "Pre-Certified",
+            "2026-01-02T00:00:00",
+            "2026-01-01T00:00:00",
+            None,
+        ),
+        ("Pre-Certified", "invalid", "2026-01-02T00:00:00", None),
+        ("Pre-Certified", "2026-01-01T00:00:00", "invalid", None),
+        (
+            "Pre-Certified: admin adjust",
+            "2026-01-01T00:00:00",
+            "2026-01-02T00:00:00",
+            None,
+        ),
+    ] {
+        let observation = Observation::parse(json!({
+            "id": 1, "status": status, "submission_date": submitted, "action_date": action
+        }))
+        .unwrap();
+        let record = render::record(&observation, Utc::now()).unwrap();
+        let expected = duration.map_or_else(String::new, |d| {
+            format!("\n\nPreapproved {d} after submission.")
+        });
+        assert_eq!(
+            record["text"],
+            format!("New ADU preapproved{expected}\n\nData Portal Record")
+        );
+    }
+}
+#[test]
+fn submission_date_changes_are_post_relevant() {
+    let mut original = row(1, "Pre-Certified");
+    original["submission_date"] = json!("2026-01-01T00:00:00");
+    let mut corrected = original.clone();
+    corrected["submission_date"] = json!("2026-01-02T00:00:00");
+    assert_ne!(
+        Observation::parse(original).unwrap().post_facts(),
+        Observation::parse(corrected).unwrap().post_facts()
+    );
 }
 #[test]
 fn baseline_unknown_and_unrelated_good_transition_are_independent() {

@@ -1,13 +1,13 @@
 use crate::{
     config::DATASET,
-    normalize::{Observation, select, source_date},
+    normalize::{Observation, Status, select, source_date},
 };
 use anyhow::{Result, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use unicode_segmentation::UnicodeSegmentation;
 
-pub const TEMPLATE_VERSION: i64 = 3;
+pub const TEMPLATE_VERSION: i64 = 4;
 
 /// Only name a specific kind when supported by the source's typed flags.
 /// This dataset has no project description or reliable floor designation.
@@ -56,7 +56,38 @@ pub fn source_url(obs: &Observation) -> Result<url::Url> {
 pub fn record(obs: &Observation, created_at: DateTime<Utc>) -> Result<Value> {
     let link = source_url(obs)?;
     let label = "Data Portal Record";
-    let text = format!("New ADU preapproved\n\n{label}");
+    let mut text = String::from("New ADU preapproved");
+    let kind = match (
+        obs.canonical["coach_house"].as_bool(),
+        obs.canonical["conversion_unit"].as_bool(),
+    ) {
+        (Some(true), Some(true)) => Some("Coach house + conversion"),
+        (_, Some(true)) => Some("Conversion"),
+        (Some(true), _) => Some("Coach house"),
+        _ => None,
+    };
+    if let Some(count) = obs.number("adu_applying_for").filter(|&n| n > 0) {
+        let units = if count == 1 { "ADU" } else { "ADUs" };
+        text.push_str(&format!("\n\n{count} {units} proposed for the property."));
+        if let Some(kind) = kind {
+            text.push_str(&format!("\nType: {kind}."));
+        }
+    } else if let Some(kind) = kind {
+        text.push_str(&format!("\n\nType: {kind}."));
+    }
+    // An adjustment's action date may be later than the original preapproval.
+    if obs.status == Status::Preapproved
+        && let (Some(submitted), Some(preapproved)) = (
+            source_date(&obs.canonical["submission_date"]),
+            source_date(&obs.canonical["action_date"]),
+        )
+        && preapproved >= submitted
+    {
+        let days = (preapproved - submitted).num_days();
+        let unit = if days == 1 { "day" } else { "days" };
+        text.push_str(&format!("\n\nPreapproved {days} {unit} after submission."));
+    }
+    text.push_str(&format!("\n\n{label}"));
     let start = text.len() - label.len();
     Ok(
         json!({"$type":"app.bsky.feed.post","text":text,"createdAt":created_at.to_rfc3339_opts(SecondsFormat::Millis,true),"langs":["en"],"facets":[{"index":{"byteStart":start,"byteEnd":text.len()},"features":[{"$type":"app.bsky.richtext.facet#link","uri":link.as_str()}]}]}),

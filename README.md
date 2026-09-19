@@ -26,7 +26,20 @@ Publishing remains disabled until `publish_enabled = true` is explicitly configu
 
 ## Announcement cards
 
-Post text is exactly “New ADU preapproved,” a blank line, and a linked “Data Portal Record.” Application details and the building-permit distinction remain in the card and alt text. Every newly prepared post includes an application-rendered **3200 × 4000** portrait JPEG, detailed alt text, the project address, requested home count, ward, preapproval date, and a link to the single city record. The headline uses plain language: **New coach house**, **ADU apartment(s)**, or **Coach house + apartments**. The current dataset has no project description or reliable floor designation, so the bot does not guess garden/basement or attic apartments. Unknown/invalid type flags use **Additional home(s)**. All posts distinguish housing preapproval from a building permit.
+Post text starts with “New ADU preapproved” and dynamically includes the positive `adu_applying_for` count proposed for the property, the type supported by the `conversion_unit` / `coach_house` flags (Conversion, Coach house, or both), and calendar days from `submission_date` to `action_date`. Timing is included only for `Pre-Certified` records with valid dates in chronological order; administrative adjustments may have a later action date and omit it. Missing or invalid details are omitted. The post ends with a linked “Data Portal Record.” For example:
+
+```text
+New ADU preapproved
+
+2 ADUs proposed for the property.
+Type: Conversion.
+
+Preapproved 32 days after submission.
+
+Data Portal Record
+```
+
+Application details and the building-permit distinction remain in the card and alt text. Every newly prepared post includes an application-rendered **3200 × 4000** portrait JPEG, detailed alt text, the project address, requested home count, ward, preapproval date, and a link to the single city record. The card headline uses plain language: **New coach house**, **ADU apartment(s)**, or **Coach house + apartments**. The current dataset has no project description or reliable floor designation, so the bot does not guess garden/basement or attic apartments. Unknown/invalid type flags use **Additional home(s)** on the card. All posts distinguish housing preapproval from a building permit.
 
 Cards use bundled Big Shoulders Bold and Roboto, black/white, Chicago flag blue (`#41B6E6`), and star red (`#E4002B`), following the [Chicago typography](https://design.chicago.gov/typography/) and [color guidance](https://design.chicago.gov/basics/). The feed is labeled unofficial. The lower panel shows Google Street View requested by project address, keeping the entire photograph and Google's attribution visible. It is street-facing context, not a rendering of the proposed unit.
 
