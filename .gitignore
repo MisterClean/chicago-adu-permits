@@ -1,0 +1,16 @@
+/target/
+/state/
+/backups/
+/config.toml
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.db
+*.db-journal
+*session*.json
+*.log
+.DS_Store
+writer.lock
+.session.tmp
+app-password

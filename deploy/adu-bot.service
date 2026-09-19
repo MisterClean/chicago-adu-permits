@@ -1,0 +1,26 @@
+[Unit]
+Description=Chicago ADU preapproval ingestion and publication
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=adu-bot
+Group=adu-bot
+StateDirectory=adu-bot
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/adu-bot
+EnvironmentFile=-/etc/adu-bot/credentials.env
+ExecStart=/usr/local/bin/adu-bot --config /etc/adu-bot/config.toml run
+TimeoutStartSec=13min
+MemoryMax=64M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077

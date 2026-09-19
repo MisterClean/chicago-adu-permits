@@ -1,0 +1,20 @@
+# Copy to config.toml (ignored by Git), or /etc/adu-bot/config.toml.
+state_dir = "state"
+source_base = "https://data.cityofchicago.org"
+page_size = 100
+response_limit = 2097152
+timeout_seconds = 30
+ingest_interval_seconds = 21600
+stale_after_seconds = 86400
+publish_enabled = false
+max_posts_per_run = 10
+min_send_interval_seconds = 60
+max_run_seconds = 720
+
+[bluesky]
+# Set the dedicated bot account DID before enabling delivery.
+# did = "did:plc:YOUR_BOT_DID"
+# identifier = "your-bot.bsky.social"
+pds = "https://bsky.social"
+# Alternative to BLUESKY_APP_PASSWORD; file should be readable only by the service user.
+# app_password_file = "/etc/adu-bot/app-password"

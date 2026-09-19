@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+backup_dir=/var/lib/adu-bot/backups
+mkdir -p "$backup_dir"
+/usr/local/bin/adu-bot --config /etc/adu-bot/config.toml backup "$backup_dir/adu-$(date -u +%Y%m%dT%H%M%SZ).sqlite3"
+# Rotate only this script's dated backups, after a successful fresh backup.
+find "$backup_dir" -type f -name 'adu-????????T??????Z.sqlite3' -mtime +30 -delete

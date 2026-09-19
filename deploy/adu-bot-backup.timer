@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Chicago ADU bot backup
+
+[Timer]
+OnCalendar=*-*-* 04:10:00
+RandomizedDelaySec=120
+Persistent=true
+Unit=adu-bot-backup.service
+
+[Install]
+WantedBy=timers.target
