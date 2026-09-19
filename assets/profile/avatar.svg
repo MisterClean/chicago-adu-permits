@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1000 1000" role="img" aria-labelledby="title desc">
+<title id="title">Chicago ADU Preapprovals</title>
+<desc id="desc">A red six-point Chicago star inside a blue coach house outline with a garage door, on white.</desc>
+<rect width="1000" height="1000" fill="#FFFFFF"/>
+<path d="M250.000 390.000L250.000 750.000Q250.000 780.000 280.000 780.000L720.000 780.000Q750.000 780.000 750.000 750.000L750.000 390.000" fill="none" stroke="#41B6E6" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M190.000 438.000L500.000 188.000L810.000 438.000" fill="none" stroke="#41B6E6" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M350.000 780.000L350.000 654.000Q350.000 640.000 364.000 640.000L636.000 640.000Q650.000 640.000 650.000 654.000L650.000 780.000" fill="none" stroke="#41B6E6" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M350.000 700.000L650.000 700.000" fill="none" stroke="#41B6E6" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M500.000 325.000L528.929 409.894L616.913 392.500L557.857 460.000L616.913 527.500L528.929 510.106L500.000 595.000L471.071 510.106L383.087 527.500L442.143 460.000L383.087 392.500L471.071 409.894Z" fill="#E4002B"/>
+</svg>

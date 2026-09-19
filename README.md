@@ -49,6 +49,16 @@ The renderer selects the highest JPEG quality within [Bluesky's 2,000,000-byte /
 
 `preview --image PATH.jpg` writes the JPEG and sibling `PATH.alt.txt` without posting or authenticating to Bluesky. It requires Google credentials; ordinary text previews and `publish --dry-run` remain offline. New rendering dependencies are native Rust libraries; fonts are embedded in the binary.
 
+## Profile artwork
+
+The [profile avatar](assets/profile/README.md) pairs a red Chicago star with a blue
+coach house outline. Its SVG master and 1024 × 1024 PNG upload copy are generated
+from the same paths with the existing Rust graphics libraries:
+
+```sh
+cargo run --locked --example generate_avatar
+```
+
 ## Commands
 
 `--config PATH` is accepted with every command. Omit it to use defaults, including `./state` and disabled publishing.
