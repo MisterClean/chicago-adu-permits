@@ -1,0 +1,239 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.64007247146,
+          41.917137037634
+        ]
+      },
+      "properties": {
+        "address": "1934 N HUDSON AVE",
+        "id": "885889",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "1934 N HUDSON AVE, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.644944096218,
+          41.917568845892
+        ]
+      },
+      "properties": {
+        "address": "1952 N HOWE ST",
+        "id": "889606",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "1952 N HOWE ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.657249708082,
+          41.929908811958
+        ]
+      },
+      "properties": {
+        "address": "1134 W DRUMMOND PL",
+        "id": "891198",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "1134 W DRUMMOND PL, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.652222399259,
+          41.922471023967
+        ]
+      },
+      "properties": {
+        "address": "2237 N BISSELL ST",
+        "id": "892163",
+        "ward": "43",
+        "quantity": 4,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2237 N BISSELL ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.651159298841,
+          41.922423107632
+        ]
+      },
+      "properties": {
+        "address": "2222 N FREMONT ST",
+        "id": "896392",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2222 N FREMONT ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.649904870777,
+          41.921171575069
+        ]
+      },
+      "properties": {
+        "address": "2140 N DAYTON ST",
+        "id": "912190",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2140 N DAYTON ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.65815690448,
+          41.918473783173
+        ]
+      },
+      "properties": {
+        "address": "2023 N RACINE AVE",
+        "id": "919053",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2023 N RACINE AVE, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.658158250999,
+          41.918507961478
+        ]
+      },
+      "properties": {
+        "address": "2025 N RACINE AVE",
+        "id": "919054",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2025 N RACINE AVE, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.646448214855,
+          41.926606820993
+        ]
+      },
+      "properties": {
+        "address": "2436 N ORCHARD ST",
+        "id": "919924",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2436 N ORCHARD ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.653232880848,
+          41.916438028637
+        ]
+      },
+      "properties": {
+        "address": "1909 N SHEFFIELD AVE",
+        "id": "927148",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "1909 N SHEFFIELD AVE, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.645922854476,
+          41.915173255661
+        ]
+      },
+      "properties": {
+        "address": "1851 N ORCHARD ST",
+        "id": "932126",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "1851 N ORCHARD ST, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.65063964881,
+          41.928091445141
+        ]
+      },
+      "properties": {
+        "address": "849 W LILL AVE",
+        "id": "938146",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "849 W LILL AVE, CHICAGO, IL, 60614"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -87.653324785395,
+          41.919136152165
+        ]
+      },
+      "properties": {
+        "address": "2057 N SHEFFIELD AVE",
+        "id": "954542",
+        "ward": "43",
+        "quantity": 1,
+        "geocode_source": "US Census address-range interpolation",
+        "matched_address": "2057 N SHEFFIELD AVE, CHICAGO, IL, 60614"
+      }
+    }
+  ]
+}

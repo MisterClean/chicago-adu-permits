@@ -1,0 +1,16 @@
+{
+  "name": "chicago-adu-map-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "refresh-map-context": "node extract-rail.mjs && node extract-poi.mjs"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "3.0.0",
+    "maplibre-gl": "5.20.0",
+    "pbf": "5.1.2"
+  }
+}

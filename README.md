@@ -51,6 +51,10 @@ The renderer selects the highest JPEG quality within [Bluesky's 2,000,000-byte /
 
 ## Profile artwork
 
+The selected second-post neighborhood and ward map designs are available in the
+[map preview](tools/map-preview/README.md), with reproducible browser rendering
+and a dated public sample. Automatic second-post publishing is not integrated.
+
 The [profile avatar](assets/profile/README.md) pairs a red Chicago star with a blue
 coach house outline. Its SVG master and 1024 × 1024 PNG upload copy are generated
 from the same paths with the existing Rust graphics libraries:
@@ -115,4 +119,4 @@ cargo build --release --locked
 
 Tests use synthetic data and local HTTP servers. They cover state/review policy, real SQLite rollback and process kills, lock exclusion, simulated disk exhaustion, HTTP failure/retry behavior, authentication rotation, UTF-8 facets, and backup integrity. Tests never contact a social account.
 
-Only source, migrations, synthetic tests, configuration examples, and operating documentation belong in Git. State databases, backups, credentials, local configuration, logs, and build products are ignored. No research dumps, pasted handoff files, or machine-specific paths are required by the application.
+Source, migrations, synthetic tests, configuration examples, operating documentation, and documented public design samples belong in Git. State databases, backups, credentials, local configuration, logs, and build products are ignored. No research dumps, pasted handoff files, or machine-specific paths are required by the application.
