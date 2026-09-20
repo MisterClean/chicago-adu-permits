@@ -1,0 +1,4 @@
+# Supply host-specific values privately; do not commit production configuration.
+repository = "OWNER/REPOSITORY"
+install_dir = "/opt/adu-bot"
+runtime_config = "/etc/adu-bot/config.toml"

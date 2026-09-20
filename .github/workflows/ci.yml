@@ -6,14 +6,51 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.94.0
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: production-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - run: cargo build --release --locked --bins
+      - name: Package native executables
+        run: |
+          mkdir dist
+          cp target/release/adu-bot dist/adu-bot-linux-x86_64
+          cp target/release/adu-bot-updater dist/adu-bot-updater-linux-x86_64
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          output = pathlib.Path('dist')
+          checksums = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir()}
+          manifest = dict(commit=os.environ['GITHUB_SHA'], platform='linux-x86_64',
+                          schema=int(subprocess.check_output(['target/release/adu-bot', 'schema-version'])),
+                          sha256=checksums['adu-bot-linux-x86_64'])
+          (output/'manifest.json').write_text(json.dumps(manifest) + '\n')
+          (output/'SHA256SUMS').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(checksums.items())))
+          PY
+      - name: Publish successful main build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" != "$GITHUB_SHA" ]; then
+            echo 'A newer commit is on main; skip release promotion.'
+            exit 0
+          fi
+          gh release create "build-$GITHUB_SHA" dist/* --target "$GITHUB_SHA" --title "Build ${GITHUB_SHA:0:12}" --notes 'Tested Linux x86-64 executables. Runtime state and credentials are excluded.' --latest

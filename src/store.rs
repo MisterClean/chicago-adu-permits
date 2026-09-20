@@ -47,12 +47,17 @@ impl Store {
         let mut db = Connection::open(dir.join("adu.sqlite3"))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; PRAGMA busy_timeout=5000;")?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        ensure!(version <= 1, "database is newer than this binary");
+        ensure!(
+            version <= crate::migrations::CURRENT,
+            "database is newer than this binary"
+        );
         if version == 0 {
-            let tx = db.transaction()?;
-            tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
-            tx.commit()?;
+            crate::migrations::apply(&mut db)?;
         }
+        ensure!(
+            version == 0 || version == crate::migrations::CURRENT,
+            "database requires explicit migration"
+        );
         db.execute("UPDATE ingest_runs SET status='failed', ended_at=?1, failure='interrupted before promotion' WHERE status='fetching'", [now()])?;
         db.execute("DELETE FROM staged_applications WHERE run_id IN (SELECT id FROM ingest_runs WHERE status='failed' AND started_at < ?1)", [now()-7*86400])?;
         Ok(Self { db, _lock: lock })

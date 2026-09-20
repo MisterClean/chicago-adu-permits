@@ -2,6 +2,7 @@
 pub mod config;
 pub mod events;
 pub mod media;
+pub mod migrations;
 pub mod normalize;
 pub mod publish;
 pub mod queue;

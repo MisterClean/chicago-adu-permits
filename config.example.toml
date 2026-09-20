@@ -1,5 +1,7 @@
 # Copy to config.toml (ignored by Git), or /etc/adu-bot/config.toml.
 state_dir = "state"
+# Enable after initial bootstrap to fail closed when persistent storage is missing.
+require_existing_state = false
 source_base = "https://data.cityofchicago.org"
 page_size = 100
 response_limit = 2097152

@@ -6,8 +6,9 @@ use adu_bot::{
     source::{self, Socrata},
     store::Store,
 };
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use clap::{Parser, Subcommand};
+use fs2::FileExt;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -23,6 +24,16 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Schema version supported by this release, without opening state.
+    SchemaVersion,
+    /// Inspect schema and integrity without changing the database or calling external services.
+    Check {
+        /// Fail on stale ingestion, paused publishing, or deliveries needing attention.
+        #[arg(long)]
+        health: bool,
+    },
+    /// Upgrade an existing database; caller must exclude normal runs with deployment.lock.
+    Migrate,
     Ingest,
     Publish {
         #[arg(long)]
@@ -94,9 +105,55 @@ fn main() {
 }
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if matches!(cli.command, Command::SchemaVersion) {
+        println!("{}", adu_bot::migrations::CURRENT);
+        return Ok(());
+    }
     let config = Config::load(cli.config.as_deref())?;
+    if let Command::Check { health } = cli.command {
+        return check(&config, health);
+    }
+    if matches!(cli.command, Command::Migrate) {
+        ensure!(
+            config.state_dir.join("adu.sqlite3").is_file(),
+            "database missing"
+        );
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(config.state_dir.join("writer.lock"))?;
+        FileExt::try_lock_exclusive(&lock)?;
+        let mut db = rusqlite::Connection::open_with_flags(
+            config.state_dir.join("adu.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
+        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
+        adu_bot::migrations::apply(&mut db)?;
+        return check(&config, false);
+    }
+    ensure!(
+        !config.require_existing_state || config.state_dir.join("adu.sqlite3").is_file(),
+        "required production database is missing; refusing to create a new baseline"
+    );
+    std::fs::create_dir_all(&config.state_dir)?;
+    let deployment_lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(config.state_dir.join("deployment.lock"))?;
+    FileExt::lock_shared(&deployment_lock)?;
+    ensure!(
+        !config.state_dir.join("deployment-blocked").exists()
+            || !matches!(
+                cli.command,
+                Command::Run | Command::Publish { dry_run: false } | Command::Ingest
+            ),
+        "deployment recovery required; runtime is blocked"
+    );
     let mut store = Store::open(&config.state_dir)?;
     match cli.command {
+        Command::SchemaVersion | Command::Check { .. } | Command::Migrate => unreachable!(),
         Command::Ingest => source::ingest(&mut store, &mut Socrata::new(&config), &config)?,
         Command::Run => {
             let started = std::time::Instant::now();
@@ -179,6 +236,62 @@ fn run() -> Result<()> {
         Command::Adapter {
             action: AdapterCommand::Resume { reason },
         } => publish::resume(&store, &config, &reason)?,
+    }
+    Ok(())
+}
+
+fn check(config: &Config, health: bool) -> Result<()> {
+    let db = rusqlite::Connection::open_with_flags(
+        config.state_dir.join("adu.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=5000;")?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    ensure!(
+        version == adu_bot::migrations::CURRENT,
+        "incompatible schema {version}"
+    );
+    let integrity: String = db.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    ensure!(integrity == "ok", "database integrity check failed");
+    ensure!(
+        db.prepare("PRAGMA foreign_key_check")?
+            .query([])?
+            .next()?
+            .is_none(),
+        "foreign key check failed"
+    );
+    let baseline: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state)", [], |r| {
+        r.get(0)
+    })?;
+    ensure!(
+        !config.require_existing_state || baseline,
+        "required baseline missing"
+    );
+    let last: Option<i64> = db.query_row(
+        "SELECT max(ended_at) FROM ingest_runs WHERE status='success'",
+        [],
+        |r| r.get(0),
+    )?;
+    let attention: i64 = db.query_row(
+        "SELECT count(*) FROM deliveries WHERE state IN ('held','failed')",
+        [],
+        |r| r.get(0),
+    )?;
+    let paused: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM adapter_state WHERE paused=1)", [], |r| r.get(0))?;
+    println!(
+        "{}",
+        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"attention_deliveries":attention,"paused":paused})
+    );
+    if health {
+        ensure!(
+            last.is_some_and(|at| adu_bot::store::now() - at <= config.stale_after_seconds),
+            "source ingestion is stale"
+        );
+        ensure!(
+            !paused && config.publish_enabled,
+            "publishing is paused or disabled"
+        );
+        ensure!(attention == 0, "deliveries require review");
     }
     Ok(())
 }

@@ -209,6 +209,7 @@ pub fn render_card(obs: &Observation, photo: &RgbImage) -> Result<PostImage> {
         canvas.data_mut()[offset..offset + 3].copy_from_slice(&pixel.0);
         canvas.data_mut()[offset + 3] = 255;
     }
+    drop(photo);
     text(
         &mut canvas,
         &body,
@@ -228,12 +229,15 @@ pub fn render_card(obs: &Observation, photo: &RgbImage) -> Result<PostImage> {
         GRAY,
     );
     rect(&mut canvas, 0., 1340., 1080., 10., BLUE);
-    let rgb: Vec<u8> = canvas
-        .data()
-        .chunks_exact(4)
-        .flat_map(|p| p[..3].iter().copied())
-        .collect();
-    drop(canvas);
+    drop(headline);
+    drop(body);
+    // Compact the opaque canvas in place instead of allocating another full-size image.
+    let mut rgb = canvas.take();
+    let pixels = rgb.len() / 4;
+    for pixel in 0..pixels {
+        rgb.copy_within(pixel * 4..pixel * 4 + 3, pixel * 3);
+    }
+    rgb.truncate(pixels * 3);
     let (bytes, quality) = jpeg(&rgb, WIDTH, HEIGHT, MAX_IMAGE_BYTES)?;
     Ok(PostImage {
         bytes,

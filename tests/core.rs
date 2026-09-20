@@ -531,6 +531,51 @@ fn publishing_fixture() -> (TempDir, Store, Config) {
     (dir, s, c)
 }
 #[test]
+fn new_approvals_publish_once_while_baseline_and_adjustments_do_not() {
+    let (dir, mut s) = db();
+    let mut config = Config {
+        publish_enabled: true,
+        state_dir: dir.path().into(),
+        ..Config::default()
+    };
+    config.bluesky.did = Some("did:plc:test".into());
+    source::ingest(
+        &mut s,
+        &mut Fixture::new(vec![row(1, "Pre-Certified"), row(2, "Submitted")]),
+        &config,
+    )
+    .unwrap();
+    let changed = vec![
+        row(1, "Pre-Certified"),
+        row(2, "Pre-Certified"),
+        row(3, "Pre-Certified"),
+        row(4, "Pre-Certified: admin adjust"),
+    ];
+    source::ingest(&mut s, &mut Fixture::new(changed.clone()), &config).unwrap();
+    let mut publisher = FakePublisher::new();
+    publish::publish(&mut s, &config, &mut publisher).unwrap();
+    s.db.execute("UPDATE adapter_state SET last_send=0", [])
+        .unwrap();
+    publish::publish(&mut s, &config, &mut publisher).unwrap();
+    assert_eq!(publisher.sends, 2);
+    assert_eq!(disposition(&s, 1), "suppressed");
+    assert_eq!(disposition(&s, 4), "held");
+    drop(s);
+    let mut s = Store::open(dir.path()).unwrap();
+    source::ingest(&mut s, &mut Fixture::new(changed), &config).unwrap();
+    publish::publish(&mut s, &config, &mut publisher).unwrap();
+    assert_eq!(publisher.sends, 2);
+    assert_eq!(
+        s.db.query_row(
+            "SELECT count(*) FROM deliveries WHERE state='sent'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+}
+#[test]
 fn ambiguous_acceptance_survives_restart_and_reconciles_before_stale_gate() {
     let (dir, mut s, c) = publishing_fixture();
     let mut p = FakePublisher::new();

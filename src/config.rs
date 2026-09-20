@@ -11,6 +11,7 @@ pub const DATASET: &str = "j4h8-ug9m";
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub state_dir: PathBuf,
+    pub require_existing_state: bool,
     pub source_base: String,
     pub page_size: usize,
     pub response_limit: u64,
@@ -52,6 +53,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             state_dir: "state".into(),
+            require_existing_state: false,
             source_base: "https://data.cityofchicago.org".into(),
             page_size: 100,
             response_limit: 2 * 1024 * 1024,

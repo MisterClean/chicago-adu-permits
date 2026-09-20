@@ -108,6 +108,10 @@ Socrata allowlisted pages → SQLite staging → validated atomic promotion
 
 See [architecture and policy](docs/architecture.md), [operations](docs/operations.md), and [validation and measured resources](docs/validation.md).
 
+For automatic native releases, persistent-state isolation, Petit integration, and schema
+upgrades, see [deployment](docs/deployment.md). Production can require existing state to
+prevent an accidentally missing database from establishing a replacement baseline.
+
 ## Development
 
 ```sh
