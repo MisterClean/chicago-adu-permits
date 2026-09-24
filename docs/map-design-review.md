@@ -46,6 +46,12 @@ addresses returned a single match, and all 13 points lie inside the official war
 polygon. Before production, inspect the source schema and use its coordinates if
 available; retain provenance and explicitly identify any geocoding fallback.
 
+The later live implementation uses the City's own latitude/longitude fields from
+a complete new ingestion, not the prototype Census matches. It validates the
+focus point against the Cook County ward boundary and reports coverage when
+other City points cannot be mapped to that ward. The dated prototype data above
+remains only a design reference.
+
 ## Map stack and rendering
 
 - [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/examples/display-buildings-in-3d/)

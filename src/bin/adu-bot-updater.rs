@@ -6,6 +6,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::unix::fs::{PermissionsExt, symlink},
@@ -39,7 +40,21 @@ struct Manifest {
     sha256: String,
     schema: i64,
     platform: String,
+    #[serde(default)]
+    renderer_sha256: BTreeMap<String, String>,
 }
+const RENDERER_ASSETS: &[(&str, &str)] = &[
+    ("map-renderer-render-live.mjs", "render-live.mjs"),
+    ("map-renderer-render-live.js", "render-live.js"),
+    ("map-renderer-render-live.html", "render-live.html"),
+    ("map-renderer-base-style.json", "data/base-style.json"),
+    ("map-renderer-maplibre-gl.js", "vendor/maplibre-gl.js"),
+    (
+        "map-renderer-BigShouldersText-Bold.ttf",
+        "fonts/BigShouldersText-Bold.ttf",
+    ),
+    ("map-renderer-Roboto.ttf", "fonts/Roboto.ttf"),
+];
 fn hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -134,6 +149,14 @@ fn identities(path: &Path) -> Result<Vec<String>> {
         "SELECT json_array(dataset_id,baseline_run,baseline_date) FROM source_state ORDER BY dataset_id",
     ] {
         let mut query = db.prepare(sql)?;
+        values.extend(
+            query
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        );
+    }
+    if schema(path)? >= 2 {
+        let mut query = db.prepare("SELECT json_array(id,parent_delivery_id,record_key,record_json,remote_uri,remote_cid,snapshot_json) FROM reply_deliveries ORDER BY id")?;
         values.extend(
             query
                 .query_map([], |r| r.get::<_, String>(0))?
@@ -240,6 +263,21 @@ fn install(cfg: &Config, root: &Path) -> Result<()> {
             && manifest.schema > 0,
         "invalid release manifest"
     );
+    if manifest.schema >= 2 {
+        ensure!(
+            manifest.renderer_sha256.len() == RENDERER_ASSETS.len(),
+            "incomplete renderer manifest"
+        );
+        for (asset, _) in RENDERER_ASSETS {
+            ensure!(
+                manifest
+                    .renderer_sha256
+                    .get(*asset)
+                    .is_some_and(|digest| hex(digest, 64)),
+                "invalid renderer checksum"
+            );
+        }
+    }
     let binary = work.join("adu-bot");
     ensure!(
         download(
@@ -251,6 +289,19 @@ fn install(cfg: &Config, root: &Path) -> Result<()> {
         "checksum mismatch"
     );
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))?;
+    let renderer = work.join("map-renderer");
+    if manifest.schema >= 2 {
+        fs::create_dir(&renderer)?;
+        for (asset, relative) in RENDERER_ASSETS {
+            let destination = renderer.join(relative);
+            fs::create_dir_all(destination.parent().context("renderer asset parent")?)?;
+            ensure!(
+                download(&agent, &format!("{base}/{asset}"), &destination, 12_000_000)?
+                    == manifest.renderer_sha256[*asset],
+                "renderer asset checksum mismatch: {asset}"
+            );
+        }
+    }
     ensure!(
         fs2::available_space(root)? > 64 * 1024 * 1024,
         "insufficient release disk space"
@@ -308,11 +359,23 @@ fn install(cfg: &Config, root: &Path) -> Result<()> {
             checksum(&candidate.join("adu-bot"))? == manifest.sha256,
             "immutable release collision"
         );
+        if manifest.schema >= 2 {
+            for (asset, relative) in RENDERER_ASSETS {
+                ensure!(
+                    checksum(&candidate.join("map-renderer").join(relative))?
+                        == manifest.renderer_sha256[*asset],
+                    "immutable renderer collision: {asset}"
+                );
+            }
+        }
     } else {
         let staging = work.join("release");
         fs::create_dir(&staging)?;
         fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))?;
         fs::copy(&binary, staging.join("adu-bot"))?;
+        if manifest.schema >= 2 {
+            fs::rename(&renderer, staging.join("map-renderer"))?;
+        }
         File::open(staging.join("adu-bot"))?.sync_all()?;
         fs::copy(&manifest_path, staging.join("manifest.json"))?;
         fs::rename(staging, &candidate)?;

@@ -1,6 +1,6 @@
 use crate::{
     config::{Config, DATASET},
-    normalize::{FIELDS, Observation, integer, select},
+    normalize::{FIELDS, MAP_FIELDS, Observation, integer, source_select},
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
@@ -72,7 +72,7 @@ impl Source for Socrata {
             .as_array()
             .context("metadata has no columns")?;
         let mut schema = Vec::new();
-        for &(name, ty) in FIELDS {
+        for &(name, ty) in FIELDS.iter().chain(MAP_FIELDS) {
             let column = columns
                 .iter()
                 .find(|c| c["fieldName"] == name)
@@ -99,7 +99,7 @@ impl Source for Socrata {
     }
     fn page(&mut self, after: Option<i64>, limit: usize) -> Result<Vec<Value>> {
         let mut query = vec![
-            ("$select", select()),
+            ("$select", source_select()),
             ("$order", "id ASC".into()),
             ("$limit", limit.to_string()),
         ];

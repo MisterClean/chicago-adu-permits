@@ -25,3 +25,10 @@ pds = "https://bsky.social"
 # Required for every new announcement: use GOOGLE_MAPS_API_KEY in the environment,
 # or a protected file containing only the key (not a whole .env file).
 # google_api_key_file = "/etc/adu-bot/google-maps-api-key"
+
+[scorecards]
+# Enable only after installing the renderer and its separate high-memory service.
+enabled = false
+renderer_dir = "/opt/adu-bot/current/map-renderer"
+node_bin = "/opt/node-v24/bin/node"
+# chrome_bin = "/usr/bin/google-chrome"

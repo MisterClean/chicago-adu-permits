@@ -7,5 +7,6 @@ pub mod normalize;
 pub mod publish;
 pub mod queue;
 pub mod render;
+pub mod scorecard;
 pub mod source;
 pub mod store;

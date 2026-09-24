@@ -1,7 +1,7 @@
 use adu_bot::{
     config::Config,
     media,
-    publish::{self, bluesky::Bluesky},
+    publish::{self, bluesky::Bluesky, scorecards},
     queue, render,
     source::{self, Socrata},
     store::Store,
@@ -40,6 +40,10 @@ enum Command {
         dry_run: bool,
     },
     Run,
+    Scorecards {
+        #[command(subcommand)]
+        action: ScorecardCommand,
+    },
     Status {
         #[arg(long)]
         json: bool,
@@ -90,6 +94,33 @@ enum AdapterCommand {
     /// Check app-password authentication without publishing.
     Check,
     Resume {
+        #[arg(long)]
+        reason: String,
+    },
+}
+#[derive(Subcommand)]
+enum ScorecardCommand {
+    /// Prepare and publish one due scorecard reply.
+    Run,
+    /// Render the source-backed reply locally without authenticating or posting.
+    Preview {
+        application_id: String,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Queue a reviewed historical announcement; does not publish.
+    Enqueue {
+        application_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    List,
+    Inspect {
+        id: i64,
+    },
+    /// Reconcile a held or failed reply using its original identity.
+    Retry {
+        id: i64,
         #[arg(long)]
         reason: String,
     },
@@ -147,7 +178,12 @@ fn run() -> Result<()> {
         !config.state_dir.join("deployment-blocked").exists()
             || !matches!(
                 cli.command,
-                Command::Run | Command::Publish { dry_run: false } | Command::Ingest
+                Command::Run
+                    | Command::Publish { dry_run: false }
+                    | Command::Ingest
+                    | Command::Scorecards {
+                        action: ScorecardCommand::Run
+                    }
             ),
         "deployment recovery required; runtime is blocked"
     );
@@ -174,6 +210,31 @@ fn run() -> Result<()> {
             ingestion?;
             publishing?;
         }
+        Command::Scorecards { action } => match action {
+            ScorecardCommand::Run => {
+                scorecards::run(&mut store, &config, &mut Bluesky::new(&config)?)?
+            }
+            ScorecardCommand::Preview {
+                application_id,
+                output_dir,
+            } => scorecards::preview(&store, &config, &application_id, &output_dir)?,
+            ScorecardCommand::Enqueue {
+                application_id,
+                reason,
+            } => println!(
+                "{}",
+                scorecards::enqueue(&store, &config, &application_id, &reason)?
+            ),
+            ScorecardCommand::List => println!(
+                "{}",
+                serde_json::to_string_pretty(&scorecards::list(&store)?)?
+            ),
+            ScorecardCommand::Inspect { id } => println!(
+                "{}",
+                serde_json::to_string_pretty(&scorecards::inspect(&store, id)?)?
+            ),
+            ScorecardCommand::Retry { id, reason } => scorecards::retry(&store, id, &reason)?,
+        },
         Command::Publish { dry_run: true } => publish::dry_run(&store)?,
         Command::Publish { dry_run: false } => {
             publish::publish(&mut store, &config, &mut Bluesky::new(&config)?)?
@@ -273,14 +334,15 @@ fn check(config: &Config, health: bool) -> Result<()> {
         |r| r.get(0),
     )?;
     let attention: i64 = db.query_row(
-        "SELECT count(*) FROM deliveries WHERE state IN ('held','failed')",
+        "SELECT (SELECT count(*) FROM deliveries WHERE state IN ('held','failed'))+(SELECT count(*) FROM reply_deliveries WHERE state IN ('held','failed'))",
         [],
         |r| r.get(0),
     )?;
+    let oldest_reply:Option<i64>=db.query_row("SELECT min(enqueued_at) FROM reply_deliveries WHERE state IN ('pending','prepared','sending','retry')",[],|r|r.get(0))?;
     let paused: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM adapter_state WHERE paused=1)", [], |r| r.get(0))?;
     println!(
         "{}",
-        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"attention_deliveries":attention,"paused":paused})
+        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"attention_deliveries":attention,"oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(adu_bot::store::now()-at).max(0)),"paused":paused})
     );
     if health {
         ensure!(
@@ -292,6 +354,12 @@ fn check(config: &Config, health: bool) -> Result<()> {
             "publishing is paused or disabled"
         );
         ensure!(attention == 0, "deliveries require review");
+        if config.scorecards.enabled {
+            ensure!(
+                oldest_reply.is_none_or(|at| adu_bot::store::now() - at <= 86400),
+                "scorecard reply queue is older than 24 hours"
+            );
+        }
     }
     Ok(())
 }
