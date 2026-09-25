@@ -1,6 +1,6 @@
 use adu_bot::{
     config::Config,
-    normalize::{FIELDS, Observation},
+    normalize::{FIELDS, MAP_FIELDS, Observation},
     publish::{DeliveryError, Publisher, Reconciliation, bluesky::Bluesky},
     source::{self, Socrata},
     store::Store,
@@ -236,7 +236,7 @@ fn timeout_after_acceptance_is_reconciled_by_authoritative_http_read() {
     worker.join().unwrap();
 }
 fn metadata() -> Value {
-    json!({"rowsUpdatedAt":1,"columns":FIELDS.iter().map(|(name,ty)|json!({"fieldName":name,"dataTypeName":ty})).collect::<Vec<_>>()})
+    json!({"rowsUpdatedAt":1,"columns":FIELDS.iter().chain(MAP_FIELDS).map(|(name,ty)|json!({"fieldName":name,"dataTypeName":ty})).collect::<Vec<_>>()})
 }
 #[test]
 fn socrata_http_keyset_allowlist_and_final_empty_page() {
@@ -255,6 +255,7 @@ fn socrata_http_keyset_allowlist_and_final_empty_page() {
         let url = url::Url::parse(&format!("http://localhost{}", r.url())).unwrap();
         let pairs: std::collections::HashMap<_, _> = url.query_pairs().collect();
         assert!(!pairs["$select"].contains("applicant"));
+        assert!(pairs["$select"].contains("latitude,longitude"));
         assert_eq!(pairs["$limit"], "1");
         reply(r, 200, json!([{"id":"123","status":"Pre-Certified"}]));
         let r = request(&s);

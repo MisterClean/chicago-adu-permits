@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Ward scorecard renderer</title>
+<style>
+@font-face{font-family:Big;src:url('/fonts/BigShouldersText-Bold.ttf')}@font-face{font-family:Roboto;src:url('/fonts/Roboto.ttf')}
+html,body{margin:0;background:#000;color:white;font-family:Roboto}#map{width:1080px;height:848px}#status{position:absolute;top:0;left:0}
+</style><div id="status">Loading map…</div><div id="map"></div>
+<script>
+const report=e=>fetch('/export/error.txt',{method:'POST',body:String(e.reason?.stack||e.message||e).slice(0,1000)});
+window.addEventListener('error',report);window.addEventListener('unhandledrejection',report);
+</script><script src="/vendor/maplibre-gl.js"></script><script type="module" src="/render-live.js"></script></html>

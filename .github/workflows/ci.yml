@@ -17,6 +17,11 @@ jobs:
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - if: matrix.os == 'ubuntu-24.04'
+        run: |
+          npm ci --prefix tools/map-preview --ignore-scripts
+          node --check tools/map-preview/render-live.mjs
+          node --check tools/map-preview/render-live.js
   release:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -30,18 +35,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.0
       - run: cargo build --release --locked --bins
+      - run: npm ci --prefix tools/map-preview --ignore-scripts
       - name: Package native executables
         run: |
           mkdir dist
           cp target/release/adu-bot dist/adu-bot-linux-x86_64
           cp target/release/adu-bot-updater dist/adu-bot-updater-linux-x86_64
+          cp tools/map-preview/render-live.mjs dist/map-renderer-render-live.mjs
+          cp tools/map-preview/render-live.js dist/map-renderer-render-live.js
+          cp tools/map-preview/render-live.html dist/map-renderer-render-live.html
+          cp tools/map-preview/data/base-style.json dist/map-renderer-base-style.json
+          cp tools/map-preview/node_modules/maplibre-gl/dist/maplibre-gl.js dist/map-renderer-maplibre-gl.js
+          cp assets/fonts/BigShouldersText-Bold.ttf dist/map-renderer-BigShouldersText-Bold.ttf
+          cp assets/fonts/Roboto.ttf dist/map-renderer-Roboto.ttf
           python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess
           output = pathlib.Path('dist')
           checksums = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir()}
           manifest = dict(commit=os.environ['GITHUB_SHA'], platform='linux-x86_64',
                           schema=int(subprocess.check_output(['target/release/adu-bot', 'schema-version'])),
-                          sha256=checksums['adu-bot-linux-x86_64'])
+                          sha256=checksums['adu-bot-linux-x86_64'],
+                          renderer_sha256={k:v for k,v in checksums.items() if k.startswith('map-renderer-')})
           (output/'manifest.json').write_text(json.dumps(manifest) + '\n')
           (output/'SHA256SUMS').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(checksums.items())))
           PY

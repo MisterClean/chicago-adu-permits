@@ -68,24 +68,48 @@ impl Bluesky {
             !image.bytes.is_empty() && image.bytes.len() <= media::MAX_IMAGE_BYTES,
             "invalid image size"
         );
+        let blob = self.upload_blob(&image.bytes)?;
+        record["embed"] = image.embed(blob);
+        render::validate(record)?;
+        Ok(())
+    }
+    pub fn attach_scorecard_images(
+        &mut self,
+        record: &mut Value,
+        images: &[(Vec<u8>, String)],
+    ) -> Result<()> {
+        ensure!(images.len() == 2, "scorecard needs two maps");
+        let mut embeds = Vec::with_capacity(2);
+        for (bytes, alt) in images {
+            ensure!(
+                !bytes.is_empty() && bytes.len() <= media::MAX_IMAGE_BYTES,
+                "invalid map image size"
+            );
+            ensure!(!alt.is_empty() && alt.len() <= 2000, "invalid map alt text");
+            let blob = self.upload_blob(bytes)?;
+            embeds.push(json!({"image":blob,"alt":alt,"aspectRatio":{"width":2160,"height":2160}}));
+        }
+        record["embed"] = json!({"$type":"app.bsky.embed.images","images":embeds});
+        crate::scorecard::validate_reply(record)?;
+        Ok(())
+    }
+    fn upload_blob(&mut self, bytes: &[u8]) -> Result<Value> {
         self.recovered = false;
         self.authenticate()?;
-        let mut response = self.upload(&image.bytes)?;
+        let mut response = self.upload(bytes)?;
         if matches!(Self::classify(&response), DeliveryError::Auth) {
             self.refresh()?;
-            response = self.upload(&image.bytes)?;
+            response = self.upload(bytes)?;
         }
         if response.status != 200 {
             return Err(Self::classify(&response).into());
         }
         let blob = &response.value["blob"];
         ensure!(
-            blob["size"].as_u64() == Some(image.bytes.len() as u64),
+            blob["size"].as_u64() == Some(bytes.len() as u64),
             "uploaded blob size mismatch"
         );
-        record["embed"] = image.embed(blob.clone());
-        render::validate(record)?;
-        Ok(())
+        Ok(blob.clone())
     }
     fn upload(&self, bytes: &[u8]) -> std::result::Result<Response, DeliveryError> {
         let session = self.session.as_ref().ok_or(DeliveryError::Auth)?;
@@ -441,12 +465,7 @@ impl Publisher for Bluesky {
     ) -> Result<Value> {
         let mut record =
             render::permit_reply_record(summary, root_uri, root_cid, chrono::Utc::now())?;
-        let (near, ward) = maps::render_pair(
-            &self.config,
-            permit,
-            summary.ward,
-            &render::address(observation),
-        )?;
+        let (near, ward) = maps::render_pair(&self.config, permit, observation)?;
         let mut first = record.clone();
         self.attach_image(&mut first, &near)?;
         let mut second = record.clone();

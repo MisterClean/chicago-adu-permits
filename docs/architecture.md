@@ -2,9 +2,9 @@
 
 ## Source contract
 
-The preapproval source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it. Schema 2 adds a separate issued-permit candidate scan from `ydr8-5enu`; its source identity is the permit row ID and its public identity is the permit number.
+The preapproval source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it. Schema 3 adds a separate issued-permit candidate scan from `ydr8-5enu`; its source identity is the permit row ID and its public identity is the permit number.
 
-`normalize::FIELDS` defines the query allowlist and expected metadata types. The selected source payload is retained per observed content version, alongside normalized fields. Missing and explicit null compare equally; integral decimal strings/numbers canonicalize without floating point. Optional invalid values generate issues and omit claims. Required invalid identifiers reject the entire scan. Added unused columns are ignored; any changed/missing selected column type rejects the scan.
+`normalize::FIELDS` defines the announcement-fact allowlist and expected metadata types. `normalize::MAP_FIELDS` adds City latitude/longitude for scorecards; these are kept in the current map-location table and do not change the announcement content hash or event identity. The selected announcement payload is retained per observed content version, alongside normalized fields. Missing and explicit null compare equally; integral decimal strings/numbers canonicalize without floating point. Optional invalid values generate issues and omit claims. Required invalid identifiers reject the entire scan. Added unused columns are ignored; any changed/missing selected column type rejects the scan.
 
 SHA-256 hashes cover named canonical fields and contract version 1. Each successful run also records a digest of its ordered `(application_id, content_hash)` sequence. No fetch time, platform state, or Socrata internal row ID affects content identity.
 
@@ -19,6 +19,8 @@ An OS advisory lock serializes commands for one state directory. All commands cu
 Every scan creates an ingest-run record, stages bounded pages, verifies strict increasing IDs, count agreement, schema stability, and unchanged `rowsUpdatedAt`. Exact page-size multiples require the final empty request. Empty snapshots after a nonempty current state and decreases exceeding `max(10, floor(previous_count × 0.05))` fail closed. Failed staging is retained seven days; run metadata is retained indefinitely.
 
 Promotion reads staging/current observations through cursors in `BEGIN IMMEDIATE`. Current rows, content/presence versions, event decisions, configured-account delivery rows, baseline state, and successful-run marker commit together. On startup, abandoned fetching runs become failed. The safeguards do not create a transactional snapshot guarantee on Socrata.
+
+Map locations are promoted in the same transaction and tagged with the complete ingest run. A scorecard requires every present application to have a map-location row from one successful post-migration run; its coordinates may be null. The reply snapshot then derives the current April 1, 2026 cohort, ward totals, 50-ward rank, Cook County boundary, mapped points, and as-of date. A known zero requested-unit count remains zero; an unknown count blocks the reply. Out-of-ward coordinates are excluded from pins, and coverage is disclosed.
 
 Versions are ordered observations, not unique hashes. A → B → A yields three versions; absence retains the prior payload with `present=false`. The latest version at or before a successful run reconstructs the last observed state.
 
@@ -47,6 +49,8 @@ Events store initial evidence separately from operator-approved evidence. Delive
 Template v2 prepares a native JPEG with project-address Street View, plain-language unit type and Chicago typography/colors. It uploads the image before freezing the blob reference, alt text and dimensions into the post. An interrupted preparation may leave an unreferenced blob, but cannot create a post. Preparation failures are deferred with zero post attempts, so evidence remains reviewable. Once frozen, retries do not fetch Street View or upload another image. Legacy frozen v1 text-only records retain their payloads. Text previews/dry runs remain offline; explicit image previews fetch Street View without Bluesky authentication.
 
 Bluesky uses a 13-character, persisted monotonic TID and a guarded create via `putRecord`. Structural equality with the frozen record yields a sent receipt. Different content holds a conflict. Only an explicit PDS `RecordNotFound` permits another guarded write. Failed reads never mean absence. Sent receipts are terminal even if someone deletes the remote post.
+
+The optional scorecard reply has a separate outbox and attempt history keyed to the sent parent delivery. Its own frozen map evidence and reply record preserve the original root/parent URI and CID. A response lost after the reply write is reconciled by its existing key before another guarded write. Scorecards render in a separately scheduled Node/Chrome process. Permit replies reuse that renderer from the main publishing worker. Map or upload failure never resends or mutates the parent announcement.
 
 The account adapter handles login, session persistence/refresh, returned DID verification, PDS routing, HTTP error classification, and receipts. Shared queue code handles freshness/evidence gates, attempts, pacing, review, and scheduling. The `Publisher` interface includes identity allocation and template versioning. A second platform implements these alongside its own rendering and recovery semantics; do not assume TID or create-if-absent support on Threads.
 

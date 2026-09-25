@@ -1,7 +1,7 @@
 use adu_bot::{
     config::Config,
     media, permits,
-    publish::{self, bluesky::Bluesky},
+    publish::{self, bluesky::Bluesky, scorecards},
     queue, render,
     source::{self, Socrata},
     store::Store,
@@ -42,6 +42,10 @@ enum Command {
         dry_run: bool,
     },
     Run,
+    Scorecards {
+        #[command(subcommand)]
+        action: ScorecardCommand,
+    },
     Status {
         #[arg(long)]
         json: bool,
@@ -125,6 +129,39 @@ enum AdapterCommand {
         reason: String,
     },
 }
+#[derive(Subcommand)]
+enum ScorecardCommand {
+    /// Prepare and publish one due scorecard reply.
+    Run,
+    /// Send a queued reply using locally rendered, source-verified maps.
+    RunPrepared {
+        id: i64,
+        #[arg(long)]
+        input_dir: PathBuf,
+    },
+    /// Render the source-backed reply locally without authenticating or posting.
+    Preview {
+        application_id: String,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Queue a reviewed historical announcement; does not publish.
+    Enqueue {
+        application_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    List,
+    Inspect {
+        id: i64,
+    },
+    /// Reconcile a held or failed reply using its original identity.
+    Retry {
+        id: i64,
+        #[arg(long)]
+        reason: String,
+    },
+}
 fn main() {
     if let Err(error) = run() {
         eprintln!(
@@ -182,6 +219,12 @@ fn run() -> Result<()> {
                     | Command::Publish { dry_run: false }
                     | Command::Ingest
                     | Command::IngestPermits
+                    | Command::Scorecards {
+                        action: ScorecardCommand::Run
+                    }
+                    | Command::Scorecards {
+                        action: ScorecardCommand::RunPrepared { .. }
+                    }
             ),
         "deployment recovery required; runtime is blocked"
     );
@@ -220,6 +263,38 @@ fn run() -> Result<()> {
             };
             publishing?;
         }
+        Command::Scorecards { action } => match action {
+            ScorecardCommand::Run => {
+                scorecards::run(&mut store, &config, &mut Bluesky::new(&config)?)?
+            }
+            ScorecardCommand::RunPrepared { id, input_dir } => scorecards::run_prepared(
+                &mut store,
+                &config,
+                &mut Bluesky::new(&config)?,
+                id,
+                &input_dir,
+            )?,
+            ScorecardCommand::Preview {
+                application_id,
+                output_dir,
+            } => scorecards::preview(&store, &config, &application_id, &output_dir)?,
+            ScorecardCommand::Enqueue {
+                application_id,
+                reason,
+            } => println!(
+                "{}",
+                scorecards::enqueue(&store, &config, &application_id, &reason)?
+            ),
+            ScorecardCommand::List => println!(
+                "{}",
+                serde_json::to_string_pretty(&scorecards::list(&store)?)?
+            ),
+            ScorecardCommand::Inspect { id } => println!(
+                "{}",
+                serde_json::to_string_pretty(&scorecards::inspect(&store, id)?)?
+            ),
+            ScorecardCommand::Retry { id, reason } => scorecards::retry(&store, id, &reason)?,
+        },
         Command::Publish { dry_run: true } => publish::dry_run(&store)?,
         Command::Publish { dry_run: false } => {
             publish::publish(&mut store, &config, &mut Bluesky::new(&config)?)?
@@ -277,11 +352,7 @@ fn run() -> Result<()> {
                 let card = media::render_permit(&config, &app, &permit)?;
                 std::fs::write(&path, &card.bytes)?;
                 std::fs::write(path.with_extension("alt.txt"), &card.alt)?;
-                let ward = app
-                    .number("ward")
-                    .ok_or_else(|| anyhow::anyhow!("ward required for maps"))?;
-                let (near, ward_map) =
-                    adu_bot::maps::render_pair(&config, &permit, ward, &render::address(&app))?;
+                let (near, ward_map) = adu_bot::maps::render_pair(&config, &permit, &app)?;
                 std::fs::write(path.with_extension("near.jpg"), &near.bytes)?;
                 std::fs::write(path.with_extension("ward.jpg"), &ward_map.bytes)?;
                 std::fs::write(path.with_extension("near.alt.txt"), &near.alt)?;
@@ -382,7 +453,7 @@ fn check(config: &Config, health: bool) -> Result<()> {
         |r| r.get(0),
     )?;
     let attention: i64 = db.query_row(
-        "SELECT (SELECT count(*) FROM deliveries WHERE state IN ('held','failed')) + (SELECT count(*) FROM permit_replies WHERE state IN ('held','failed'))",
+        "SELECT (SELECT count(*) FROM deliveries WHERE state IN ('held','failed')) + (SELECT count(*) FROM permit_replies WHERE state IN ('held','failed')) + (SELECT count(*) FROM reply_deliveries WHERE state IN ('held','failed'))",
         [],
         |r| r.get(0),
     )?;
@@ -391,10 +462,11 @@ fn check(config: &Config, health: bool) -> Result<()> {
         [],
         |r| r.get(0),
     )?;
+    let oldest_reply:Option<i64>=db.query_row("SELECT min(enqueued_at) FROM reply_deliveries WHERE state IN ('pending','prepared','sending','retry')",[],|r|r.get(0))?;
     let paused: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM permit_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM adapter_state WHERE paused=1)", [], |r| r.get(0))?;
     println!(
         "{}",
-        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"permit_last_success":permit_last,"attention_deliveries":attention,"paused":paused})
+        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"permit_last_success":permit_last,"attention_deliveries":attention,"oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(adu_bot::store::now()-at).max(0)),"paused":paused})
     );
     if health {
         ensure!(
@@ -410,6 +482,12 @@ fn check(config: &Config, health: bool) -> Result<()> {
             "publishing is paused or disabled"
         );
         ensure!(attention == 0, "deliveries require review");
+        if config.scorecards.enabled {
+            ensure!(
+                oldest_reply.is_none_or(|at| adu_bot::store::now() - at <= 86400),
+                "scorecard reply queue is older than 24 hours"
+            );
+        }
     }
     Ok(())
 }

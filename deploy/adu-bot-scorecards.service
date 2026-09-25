@@ -1,0 +1,29 @@
+[Unit]
+Description=Render and publish one Chicago ADU ward scorecard reply
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=adu-bot
+Group=adu-bot
+WorkingDirectory=/var/lib/adu-bot
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TasksMax=128
+EnvironmentFile=/etc/adu-bot/credentials.env
+ExecStart=/opt/adu-bot/current/adu-bot --config /etc/adu-bot/config.toml scorecards run
+ReadWritePaths=/var/lib/adu-bot
+MemoryHigh=1024M
+MemoryMax=1536M
+MemorySwapMax=256M
+CPUQuota=100%
+TimeoutStartSec=240

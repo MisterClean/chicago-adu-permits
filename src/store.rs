@@ -136,6 +136,7 @@ impl Store {
                     || prior.as_ref().is_some_and(|p| !p.2);
                 let version = prior.as_ref().map_or(1, |p| p.0 + i64::from(is_changed));
                 tx.execute("INSERT INTO applications VALUES(?1,?2,?3,?4,?5,1,?6,?6,?7) ON CONFLICT(dataset_id,application_id) DO UPDATE SET version=excluded.version,observation=CASE WHEN applications.version != excluded.version OR applications.present=0 THEN excluded.observation ELSE applications.observation END,content_hash=excluded.content_hash,present=1,last_seen=excluded.last_seen,changed_run=CASE WHEN applications.version != excluded.version THEN excluded.changed_run ELSE applications.changed_run END", params![DATASET,obs.id,version,serialized,obs.hash,timestamp,run])?;
+                tx.execute("INSERT INTO map_locations(dataset_id,application_id,observed_run,latitude,longitude) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(dataset_id,application_id) DO UPDATE SET observed_run=excluded.observed_run,latitude=excluded.latitude,longitude=excluded.longitude",params![DATASET,obs.id,run,obs.location.map(|p| p.latitude),obs.location.map(|p| p.longitude)])?;
                 if is_changed {
                     changed += 1;
                     let mut fields: Vec<&str> = obs
@@ -199,6 +200,10 @@ impl Store {
         tx.execute("INSERT INTO application_versions SELECT dataset_id,application_id,version+1,?2,content_hash,observation,0,version,'[\"present\"]' FROM applications a WHERE dataset_id=?1 AND present=1 AND NOT EXISTS(SELECT 1 FROM staged_applications s WHERE s.run_id=?2 AND s.application_id=a.application_id)", params![DATASET,run])?;
         tx.execute("INSERT INTO issues(application_id,run_id,event_key,kind,detail,at) SELECT a.application_id,?2,e.event_key,'absence','missing from complete snapshot',?3 FROM applications a JOIN events e USING(dataset_id,application_id) WHERE a.dataset_id=?1 AND a.present=1 AND NOT EXISTS(SELECT 1 FROM staged_applications s WHERE s.run_id=?2 AND s.application_id=a.application_id)", params![DATASET,run,timestamp])?;
         tx.execute("UPDATE applications SET version=version+1,present=0,changed_run=?2 WHERE dataset_id=?1 AND present=1 AND NOT EXISTS(SELECT 1 FROM staged_applications s WHERE s.run_id=?2 AND s.application_id=applications.application_id)", params![DATASET,run])?;
+        tx.execute(
+            "DELETE FROM map_locations WHERE dataset_id=?1 AND observed_run<>?2",
+            params![DATASET, run],
+        )?;
         tx.execute("UPDATE events SET disposition='held',reason='application absent' WHERE disposition='pending' AND application_id IN (SELECT application_id FROM applications WHERE present=0)", [])?;
         tx.execute("UPDATE deliveries SET state='held',last_error='application absent' WHERE attempts=0 AND state IN ('pending','prepared') AND event_key IN (SELECT event_key FROM events WHERE reason='application absent')", [])?;
         tx.execute("UPDATE ingest_runs SET status='success',ended_at=?2,digest=?3,changed_rows=?4,missing_rows=?5 WHERE id=?1", params![run,timestamp,format!("{:x}",digest.finalize()),changed,missing])?;
@@ -263,6 +268,7 @@ impl Store {
         let revision: Option<String> = self.db.query_row("SELECT revision_after FROM ingest_runs WHERE status='success' ORDER BY id DESC LIMIT 1",[],|r|r.get(0)).optional()?.flatten();
         let oldest: Option<i64> = self.db.query_row(
             "SELECT min(e.observed_at) FROM events e WHERE e.disposition='pending' AND (NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key) OR EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key AND d.state NOT IN ('sent','suppressed')) OR EXISTS(SELECT 1 FROM permit_replies p WHERE p.event_key=e.event_key AND p.state NOT IN ('sent','suppressed')))", [], |r| r.get(0))?;
+        let oldest_reply:Option<i64>=self.db.query_row("SELECT min(enqueued_at) FROM reply_deliveries WHERE state IN ('pending','prepared','sending','retry')",[],|r|r.get(0))?;
         let last_attempt_status: Option<String> = self
             .db
             .query_row(
@@ -286,11 +292,14 @@ impl Store {
                 "source_revision":revision,"present":scalar("SELECT count(*) FROM applications WHERE present=1")?,"missing":scalar("SELECT count(*) FROM applications WHERE present=0")?,
                 "changed_last_run":scalar("SELECT (SELECT changed_rows FROM ingest_runs WHERE status='success' ORDER BY id DESC LIMIT 1)")?,
                 "unknown_statuses":scalar("SELECT count(*) FROM applications WHERE present=1 AND json_extract(observation,'$.status')='unknown'")?,
-                "events":groups("events","disposition")?,"deliveries":groups("deliveries","state")?,"permit_replies":groups("permit_replies","state")?,"issues":groups("issues","kind")?,
+                "events":groups("events","disposition")?,"deliveries":groups("deliveries","state")?,"permit_replies":groups("permit_replies","state")?,"scorecard_replies":groups("reply_deliveries","state")?,"issues":groups("issues","kind")?,
                 "oldest_pending_observed_at":oldest,
                 "oldest_queue_age_seconds":oldest.map(|at|(now()-at).max(0)),
                 "last_attempt_status":last_attempt_status,"last_attempt_failure":last_failure,
                 "last_successful_post":scalar("SELECT max(t) FROM (SELECT sent_at AS t FROM deliveries UNION ALL SELECT sent_at AS t FROM permit_replies)")?,
+                "last_successful_scorecard":scalar("SELECT max(sent_at) FROM reply_deliveries")?,
+                "oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(now()-at).max(0)),
+                "mapped_locations_current":scalar("SELECT count(*) FROM map_locations WHERE observed_run=(SELECT last_successful_run FROM source_state LIMIT 1) AND latitude IS NOT NULL")?,
                 "posting_paused":scalar("SELECT max(posting_paused) FROM source_state")?,"adapter_paused":scalar("SELECT max(paused) FROM adapter_state")?
             }),
         )

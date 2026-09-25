@@ -55,4 +55,3 @@ CREATE TABLE permit_reply_attempts (
  id INTEGER PRIMARY KEY, reply_id INTEGER NOT NULL REFERENCES permit_replies(id),
  at INTEGER NOT NULL, outcome TEXT NOT NULL, detail TEXT
 );
-PRAGMA user_version=2;

@@ -1,6 +1,6 @@
 # Chicago ADU preapproval and building-permit bot
 
-A small Rust command-line service that watches Chicago's [Additional Dwelling Unit Preapproval Applications](https://data.cityofchicago.org/Buildings/Additional-Dwelling-Unit-Preapproval-Applications/j4h8-ug9m/about_data) and [Building Permits](https://data.cityofchicago.org/Buildings/Building-Permits/ydr8-5enu/about_data). It announces newly qualifying preapprovals and newly issued building permits linked to them.
+A small Rust command-line service that watches Chicago's [Additional Dwelling Unit Preapproval Applications](https://data.cityofchicago.org/Buildings/Additional-Dwelling-Unit-Preapproval-Applications/j4h8-ug9m/about_data) and [Building Permits](https://data.cityofchicago.org/Buildings/Building-Permits/ydr8-5enu/about_data). It announces newly qualifying preapprovals and newly issued building permits linked to them, with separately queued map replies.
 
 Preapproval and permit issuance are separate events. A preapproval card says a building permit is still required. A permit card says the City issued a permit; it does not say construction is complete. One preapproval application may request multiple ADUs and receive more than one building permit.
 
@@ -52,13 +52,17 @@ The renderer selects the highest JPEG quality within [Bluesky's 2,000,000-byte /
 
 `preview --image PATH.jpg` writes the JPEG and sibling `PATH.alt.txt` without posting or authenticating to Bluesky. It requires Google credentials; ordinary text previews and `publish --dry-run` remain offline. New rendering dependencies are native Rust libraries; fonts are embedded in the binary.
 
-## Profile artwork
+## Ward scorecard replies
 
-The selected second-post neighborhood and ward map designs for **preapproval**
-announcements remain available in the [map preview](tools/map-preview/README.md).
-Automatic preapproval map replies are not integrated. The building-permit series
-uses native neighborhood and ward map replies with the same Chicago typography,
-colors, and two-map thread structure.
+The scorecard worker is disabled by default. Once enabled, it queues replies to newly sent announcements only. Historical announcements need an explicit `scorecards enqueue APPLICATION_ID --reason TEXT`; queueing alone does not publish. Each reply has its own durable identity, frozen source snapshot, attempt history, and PDS reconciliation. A failed map or reply leaves the successful parent announcement intact.
+
+The first image shows the application location in an oblique neighborhood map. The second outlines its ward and marks the currently preapproved applications in the April 1, 2026 onward cohort. The text reports requested ADUs, application count, rank among all 50 wards, citywide share, and an as-of date. Zero requested units remain zero; an unknown quantity blocks a scorecard rather than being guessed. Pins without usable City coordinates or outside their reported Cook County ward are omitted, with mapped coverage reported. Maps use City coordinates, a Cook County boundary, and OpenMapTiles/OpenStreetMap context. The [map preview](tools/map-preview/README.md) also keeps the dated design sample.
+
+Rendering requires Node 20+, Chrome with software WebGL, outbound access to the map tiles and Cook County boundary, and materially more memory than the native announcement worker. Set `[scorecards].renderer_dir` to the release's `map-renderer` directory on a deployed host, and `[scorecards].chrome_bin` if Chrome is not at `/usr/bin/google-chrome`. Run a source-backed local preview before enabling the separate schedule. See [operations](docs/operations.md#scorecard-activation-and-recovery) and [deployment](docs/deployment.md#scorecard-worker).
+
+Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design, centered on the permit location. The main publishing worker currently prepares those permit maps and therefore also needs the renderer, Chrome, and enough memory for a map render.
+
+## Profile artwork
 
 The [profile avatar](assets/profile/README.md) pairs a red Chicago star with a blue
 coach house outline. Its SVG master and 1024 × 1024 PNG upload copy are generated
@@ -85,6 +89,13 @@ cargo run --locked --example generate_avatar
 | `permit-matches list` | Inspect confirmed and review-needed permit links |
 | `permit-matches confirm ID NUMBER --reason TEXT` | Approve a proposed link for the normal delivery path |
 | `permit-matches reject ID NUMBER --reason TEXT` | Reject a proposed link with an append-only review receipt |
+| `scorecards preview ID --output-dir DIR` | Render both source-backed maps, alt text, post text, and frozen evidence locally without posting |
+| `scorecards run` | Prepare or reconcile and send one due scorecard reply when enabled |
+| `scorecards run-prepared REPLY_ID --input-dir DIR` | Send one queued reply from reviewed preview files, using the production outbox without running Chrome there |
+| `scorecards enqueue ID --reason TEXT` | Queue a reviewed historical sent announcement for a reply |
+| `scorecards list` | Show reply state, attempts, last error, and sent URI |
+| `scorecards inspect REPLY_ID` | Show parent and reply receipts, frozen evidence, payload, and attempt history |
+| `scorecards retry REPLY_ID --reason TEXT` | Reconcile a held or failed reply using its existing identity |
 | `queue list` | List decisions, including historical suppressions and holds |
 | `queue inspect EVENT_KEY` | Inspect initial/current/approved evidence, frozen records, reviews, and receipts |
 | `queue approve EVENT_KEY --reason TEXT` | Explicitly approve current qualifying evidence |
@@ -111,7 +122,7 @@ Socrata allowlisted pages → SQLite staging → validated atomic promotion
 - Exact status classification, namespaced application IDs, stable first-preapproval event keys, and conservative review of adjustments, backfills, unknown prior states, and invalid/future dates.
 - Full observed version history, including A → B → A and absence/reappearance. Polling cannot reconstruct transitions between scans.
 - Immutable delivery records with persisted monotonic TIDs; guarded `putRecord` includes explicit `swapRecord: null`. Uncertain results are reconciled on the authoritative PDS before another send.
-- Credentials are separate from the database. No names, personal mailing addresses, maps, or geocoding enter the ingestion allowlist. Project addresses are public post facts.
+- Credentials are separate from the database. No names or personal mailing addresses enter the ingestion allowlist. Public project addresses and City-provided approximate coordinates support the announcements and optional map replies; no geocoding service is called by the worker.
 - Deterministic templates generate text; no LLM, web server, queue server, or external post-generation service is needed.
 
 `events` knows nothing about Bluesky. `publish::Publisher` separates platform formatting, remote identity reconciliation, and sending from shared queue rules. Adding Threads requires its own adapter and recovery research; it is not implemented. Record identity allocation also belongs to the adapter; other platforms need not use Bluesky TIDs.

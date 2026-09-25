@@ -25,6 +25,25 @@ pub struct Config {
     pub max_run_seconds: u64,
     pub bluesky: BlueskyConfig,
     pub media: MediaConfig,
+    pub scorecards: ScorecardConfig,
+}
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScorecardConfig {
+    pub enabled: bool,
+    pub renderer_dir: PathBuf,
+    pub node_bin: PathBuf,
+    pub chrome_bin: Option<PathBuf>,
+}
+impl Default for ScorecardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            renderer_dir: PathBuf::from("tools/map-preview"),
+            node_bin: PathBuf::from("node"),
+            chrome_bin: None,
+        }
+    }
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -67,6 +86,7 @@ impl Default for Config {
             max_run_seconds: 720,
             bluesky: BlueskyConfig::default(),
             media: MediaConfig::default(),
+            scorecards: ScorecardConfig::default(),
         }
     }
 }

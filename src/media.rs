@@ -14,6 +14,7 @@ pub const HEIGHT: u32 = 4000;
 const SCALE: f32 = WIDTH as f32 / 1080.;
 const BLUE: u32 = 0x41b6e6;
 const RED: u32 = 0xe4002b;
+const GREEN: u32 = 0x29a366;
 const WHITE: u32 = 0xffffff;
 const GRAY: u32 = 0xb3b3b3;
 
@@ -102,11 +103,12 @@ pub fn render_permit_card(
         star(&mut canvas, 850. + i as f32 * 51., 58., 18.);
     }
     text(&mut canvas, &body, "BUILDING PERMIT", 48., 139., 25., BLUE);
+    check_badge(&mut canvas, 82., 245., 34.);
     fitted(
         &mut canvas,
         &headline,
-        &render::unit_name(obs).to_uppercase(),
-        48.,
+        "ADU BUILDING",
+        132.,
         291.,
         150.,
         WHITE,
@@ -195,7 +197,7 @@ pub fn render_permit_card(
     rgb.truncate(pixels * 3);
     let (bytes, quality) = jpeg(&rgb, WIDTH, HEIGHT, MAX_IMAGE_BYTES)?;
     let alt = format!(
-        "Chicago building permit announcement. {} at {}, Chicago. Permit {} issued {}. {} ADUs proposed in housing preapproval application {}. Street View imagery depicts street-facing context and may predate the project. Data: City of Chicago. Unofficial community feed.",
+        "✅ ADU BUILDING PERMIT ISSUED. {} at {}, Chicago. Permit {} issued {}. {} ADUs proposed in housing preapproval application {}. Street View imagery depicts street-facing context and may predate the project. Data: City of Chicago. Unofficial community feed.",
         render::unit_name(obs),
         render::address(obs),
         permit.number,
@@ -464,6 +466,32 @@ fn star(canvas: &mut Pixmap, x: f32, y: f32, radius: f32) {
         );
     }
 }
+fn check_badge(canvas: &mut Pixmap, x: f32, y: f32, radius: f32) {
+    let mut circle = PathBuilder::new();
+    circle.push_circle(x * SCALE, y * SCALE, radius * SCALE);
+    if let Some(path) = circle.finish() {
+        canvas.fill_path(
+            &path,
+            &paint(GREEN),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+    let mut check = PathBuilder::new();
+    check.move_to((x - radius * 0.48) * SCALE, (y - radius * 0.01) * SCALE);
+    check.line_to((x - radius * 0.12) * SCALE, (y + radius * 0.34) * SCALE);
+    check.line_to((x + radius * 0.52) * SCALE, (y - radius * 0.34) * SCALE);
+    if let Some(path) = check.finish() {
+        let stroke = tiny_skia::Stroke {
+            width: 7. * SCALE,
+            line_cap: tiny_skia::LineCap::Round,
+            line_join: tiny_skia::LineJoin::Round,
+            ..Default::default()
+        };
+        canvas.stroke_path(&path, &paint(WHITE), &stroke, Transform::identity(), None);
+    }
+}
 fn text_width(font: &Font, label: &str, size: f32) -> f32 {
     label
         .chars()
@@ -521,148 +549,4 @@ fn text(
         }
         pen += metrics.advance_width;
     }
-}
-
-/// Native geographic companion card using the same Chicago type and color system.
-pub fn map_card(
-    base: &RgbImage,
-    label: &str,
-    title: &str,
-    bounds: &crate::maps::Bounds,
-    marker: Option<(f64, f64)>,
-    rings: Option<&[Vec<(f64, f64)>]>,
-    alt: String,
-) -> Result<PostImage> {
-    const MAP_HEIGHT: u32 = 2000;
-    const MAP_TOP: u32 = 948;
-    ensure!(base.dimensions() == (640, 400), "unexpected basemap size");
-    let mut canvas = Pixmap::new(WIDTH, WIDTH).context("allocate map card")?;
-    canvas.fill(hex(0x000000));
-    let headline = Font::from_bytes(
-        include_bytes!("../assets/fonts/BigShouldersText-Bold.ttf") as &[u8],
-        FontSettings::default(),
-    )
-    .map_err(|_| anyhow::anyhow!("invalid headline font"))?;
-    let body = Font::from_bytes(
-        include_bytes!("../assets/fonts/Roboto.ttf") as &[u8],
-        FontSettings::default(),
-    )
-    .map_err(|_| anyhow::anyhow!("invalid body font"))?;
-    rect(&mut canvas, 0., 0., 1080., 8., BLUE);
-    for i in 0..4 {
-        star(&mut canvas, 850. + i as f32 * 51., 58., 18.);
-    }
-    text(&mut canvas, &body, label, 48., 139., 25., BLUE);
-    fitted(
-        &mut canvas,
-        &headline,
-        &title.to_uppercase(),
-        48.,
-        255.,
-        86.,
-        WHITE,
-    );
-    let resized = image::imageops::resize(
-        base,
-        WIDTH,
-        MAP_HEIGHT,
-        image::imageops::FilterType::Lanczos3,
-    );
-    for (x, y, pixel) in resized.enumerate_pixels() {
-        let offset = (((MAP_TOP + y) * WIDTH + x) * 4) as usize;
-        canvas.data_mut()[offset..offset + 3].copy_from_slice(&pixel.0);
-        canvas.data_mut()[offset + 3] = 255;
-    }
-    drop(resized);
-    let project = |lon: f64, lat: f64| -> (f32, f32) {
-        (
-            ((lon - bounds.west) / (bounds.east - bounds.west) * WIDTH as f64) as f32,
-            (MAP_TOP as f64
-                + (bounds.north - lat) / (bounds.north - bounds.south) * MAP_HEIGHT as f64)
-                as f32,
-        )
-    };
-    if let Some(rings) = rings {
-        for ring in rings {
-            let mut path = PathBuilder::new();
-            for (index, (lon, lat)) in ring.iter().enumerate() {
-                let (x, y) = project(*lon, *lat);
-                if index == 0 {
-                    path.move_to(x, y)
-                } else {
-                    path.line_to(x, y)
-                }
-            }
-            path.close();
-            if let Some(path) = path.finish() {
-                let mut stroke = tiny_skia::Stroke {
-                    width: 13.,
-                    ..Default::default()
-                };
-                canvas.stroke_path(&path, &paint(WHITE), &stroke, Transform::identity(), None);
-                stroke.width = 7.;
-                canvas.stroke_path(&path, &paint(RED), &stroke, Transform::identity(), None);
-            }
-        }
-    }
-    if let Some((lon, lat)) = marker {
-        let (x, y) = project(lon, lat);
-        let mut outer = PathBuilder::new();
-        outer.push_circle(x, y, 35.);
-        if let Some(path) = outer.finish() {
-            canvas.fill_path(
-                &path,
-                &paint(WHITE),
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        let mut inner = PathBuilder::new();
-        inner.push_circle(x, y, 23.);
-        if let Some(path) = inner.finish() {
-            canvas.fill_path(
-                &path,
-                &paint(RED),
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-    }
-    text(
-        &mut canvas,
-        &body,
-        "Map: Esri World Street Map  /  Ward: Cook County GIS  /  Permit: City of Chicago",
-        30.,
-        1022.,
-        14.,
-        WHITE,
-    );
-    fitted(
-        &mut canvas,
-        &body,
-        "Esri, DeLorme, HERE, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China, Esri Thailand, MapmyIndia, TomTom",
-        30.,
-        1051.,
-        10.,
-        GRAY,
-    );
-    rect(&mut canvas, 0., 1072., 1080., 8., BLUE);
-    drop(headline);
-    drop(body);
-    let mut rgb = canvas.take();
-    let pixels = rgb.len() / 4;
-    for pixel in 0..pixels {
-        rgb.copy_within(pixel * 4..pixel * 4 + 3, pixel * 3);
-    }
-    rgb.truncate(pixels * 3);
-    let (bytes, quality) = jpeg(&rgb, WIDTH, WIDTH, MAX_IMAGE_BYTES)?;
-    Ok(PostImage {
-        bytes,
-        alt,
-        quality,
-        width: WIDTH,
-        height: WIDTH,
-    })
 }

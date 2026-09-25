@@ -1,8 +1,9 @@
 # Second-post map preview
 
 The selected N5 neighborhood map and C Transit atlas for application 954542 at
-2057 N Sheffield Ave. This is a frozen design example dated September 19, 2026;
-it is not connected to the bot's automatic publishing flow.
+2057 N Sheffield Ave. This is a frozen design example dated September 19, 2026.
+The live `render-live.mjs` worker follows this design using a current, source-backed
+snapshot; run it through `adu-bot scorecards preview` to inspect the resulting pair.
 
 ```sh
 cd tools/map-preview
@@ -45,6 +46,18 @@ saved TileJSON and rebuilds rail and POI extracts. Tile downloads are ignored by
 Git. This does not refresh application facts, dates, or ward statistics. The
 sample contains only the project fields used for the map; local snapshots,
 credentials, sessions, and live-post payloads remain outside this directory.
+
+## Live scorecard rendering
+
+`adu-bot scorecards preview APPLICATION_ID --output-dir DIR` creates a current
+snapshot from the ingested City rows and official Cook County ward boundary,
+then launches `render-live.mjs` with headless Chrome. The renderer reads only that
+frozen input. It exports two 2160 × 2160 JPEGs and a verification file, and the
+CLI writes the same maps, alt text, post text, and source snapshot into `DIR`.
+It requires a successful post-migration ingestion, Node 20+, Chrome with
+software WebGL, and outbound OpenFreeMap access. The bot's scorecard worker uses
+the same renderer before uploading a reply. The prototype `points.json` and
+`summary.json` remain dated samples; they do not feed live replies.
 
 See [the design review](../../docs/map-design-review.md) for data provenance,
 City attribution terms, validation, and the remaining production integration.
