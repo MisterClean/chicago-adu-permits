@@ -1,8 +1,10 @@
 use super::{DeliveryError, DeliveryIdentity, Publisher, Receipt, Reconciliation};
 use crate::{
     config::{Config, secure_url},
+    maps,
     media::{self, PostImage},
     normalize::Observation,
+    permits::{Permit, WardSummary},
     render,
     store::now,
 };
@@ -420,6 +422,37 @@ impl Publisher for Bluesky {
         let image = media::render(&self.config, observation)?;
         self.attach_image(&mut record, &image)?;
         render::validate(&record).context("validate Bluesky post")?;
+        Ok(record)
+    }
+    fn prepare_permit(&mut self, observation: &Observation, permit: &Permit) -> Result<Value> {
+        let mut record = render::permit_record(observation, permit, chrono::Utc::now())?;
+        let image = media::render_permit(&self.config, observation, permit)?;
+        self.attach_image(&mut record, &image)?;
+        render::validate(&record).context("validate permit Bluesky post")?;
+        Ok(record)
+    }
+    fn prepare_permit_reply(
+        &mut self,
+        observation: &Observation,
+        permit: &Permit,
+        summary: &WardSummary,
+        root_uri: &str,
+        root_cid: &str,
+    ) -> Result<Value> {
+        let mut record =
+            render::permit_reply_record(summary, root_uri, root_cid, chrono::Utc::now())?;
+        let (near, ward) = maps::render_pair(
+            &self.config,
+            permit,
+            summary.ward,
+            &render::address(observation),
+        )?;
+        let mut first = record.clone();
+        self.attach_image(&mut first, &near)?;
+        let mut second = record.clone();
+        self.attach_image(&mut second, &ward)?;
+        record["embed"] = json!({"$type":"app.bsky.embed.images","images":[first["embed"]["images"][0].clone(),second["embed"]["images"][0].clone()]});
+        render::validate(&record)?;
         Ok(record)
     }
     fn reconcile(

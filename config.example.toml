@@ -22,6 +22,6 @@ pds = "https://bsky.social"
 # app_password_file = "/etc/adu-bot/app-password"
 
 [media]
-# Required for every new announcement: use GOOGLE_MAPS_API_KEY in the environment,
+# Required for every new root announcement: use GOOGLE_MAPS_API_KEY in the environment,
 # or a protected file containing only the key (not a whole .env file).
 # google_api_key_file = "/etc/adu-bot/google-maps-api-key"

@@ -1,6 +1,7 @@
 use crate::{
     config::DATASET,
     normalize::{Observation, Status, select, source_date},
+    permits::{Permit, WardSummary},
 };
 use anyhow::{Result, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -94,6 +95,122 @@ pub fn record(obs: &Observation, created_at: DateTime<Utc>) -> Result<Value> {
     )
 }
 
+fn calendar_days(from: Option<chrono::NaiveDate>, to: Option<chrono::NaiveDate>) -> Option<i64> {
+    let (from, to) = (from?, to?);
+    (to >= from).then_some((to - from).num_days())
+}
+
+pub fn permit_record(
+    obs: &Observation,
+    permit: &Permit,
+    created_at: DateTime<Utc>,
+) -> Result<Value> {
+    let issued = permit
+        .date("issue_date")
+        .ok_or_else(|| anyhow::anyhow!("permit issue date missing"))?;
+    let address = address(obs);
+    let address = if address.chars().count() > 50 {
+        format!("Application #{}", obs.id)
+    } else {
+        address
+    };
+    let mut lines = vec![
+        "ADU building permit issued".to_owned(),
+        format!("{} · {}", address, issued.format("%b %-d, %Y")),
+    ];
+    if let Some(n) = obs.number("adu_applying_for").filter(|n| *n > 0) {
+        lines.push(format!(
+            "{n} {} proposed",
+            if n == 1 { "ADU" } else { "ADUs" }
+        ));
+    }
+    if let Some(cost) = permit
+        .text("reported_cost")
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|n| *n > 0. && *n < 100_000_000.)
+    {
+        let rounded = (cost.round() as i64).to_string();
+        let mut grouped = String::new();
+        for (i, c) in rounded.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(c);
+        }
+        lines.push(format!(
+            "Reported project cost: ${}",
+            grouped.chars().rev().collect::<String>()
+        ));
+    }
+    let preapproved = source_date(&obs.canonical["action_date"]);
+    let applied = permit.date("application_start_date");
+    for (label, days) in [
+        (
+            "Preapproval → permit application",
+            calendar_days(preapproved, applied),
+        ),
+        (
+            "Permit application → issued",
+            calendar_days(applied, Some(issued)),
+        ),
+        (
+            "Preapproval → building permit",
+            calendar_days(preapproved, Some(issued)),
+        ),
+    ] {
+        if let Some(days) = days {
+            lines.push(format!("{label}: {days} days"));
+        }
+    }
+    let mut text = lines.join("\n");
+    let mut facets = Vec::new();
+    for (label, link) in [
+        ("Permit record", permit.url()?),
+        ("Preapproval record", source_url(obs)?),
+    ] {
+        text.push('\n');
+        let start = text.len();
+        text.push_str(label);
+        facets.push(json!({"index":{"byteStart":start,"byteEnd":text.len()},"features":[{"$type":"app.bsky.richtext.facet#link","uri":link.as_str()}]}));
+    }
+    let record = json!({"$type":"app.bsky.feed.post","text":text,"createdAt":created_at.to_rfc3339_opts(SecondsFormat::Millis,true),"langs":["en"],"facets":facets});
+    validate(&record)?;
+    Ok(record)
+}
+
+pub fn permit_reply_record(
+    summary: &WardSummary,
+    root_uri: &str,
+    root_cid: &str,
+    created_at: DateTime<Utc>,
+) -> Result<Value> {
+    ensure!(
+        root_uri.starts_with("at://") && !root_cid.is_empty(),
+        "invalid root reference"
+    );
+    let share = if summary.city_adus > 0 {
+        format!(
+            "{:.1}%",
+            100. * summary.adus as f64 / summary.city_adus as f64
+        )
+    } else {
+        "unknown share".into()
+    };
+    let text = format!(
+        "Around the permit + Ward {}\n\n{} requested ADUs across {} preapproved applications. Tied #{} of 50 wards by requested ADUs ({} citywide).\n\nApplications since Apr 1, 2026. As of {}. Permit point is approximate.",
+        summary.ward,
+        summary.adus,
+        summary.applications,
+        summary.rank,
+        share,
+        summary.as_of.format("%b %-d")
+    );
+    let parent = json!({"uri":root_uri,"cid":root_cid});
+    let record = json!({"$type":"app.bsky.feed.post","text":text,"createdAt":created_at.to_rfc3339_opts(SecondsFormat::Millis,true),"langs":["en"],"facets":[],"reply":{"root":parent,"parent":parent}});
+    validate(&record)?;
+    Ok(record)
+}
+
 pub fn validate(record: &Value) -> Result<()> {
     let text = record["text"]
         .as_str()
@@ -128,7 +245,10 @@ pub fn validate(record: &Value) -> Result<()> {
         let images = embed["images"]
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("missing images"))?;
-        ensure!(images.len() == 1, "expected one announcement card");
+        ensure!(
+            (1..=2).contains(&images.len()),
+            "expected one or two announcement images"
+        );
         for image in images {
             ensure!(
                 image["alt"].as_str().is_some_and(|s| !s.trim().is_empty()),
@@ -145,9 +265,15 @@ pub fn validate(record: &Value) -> Result<()> {
                         .is_some_and(|s| !s.is_empty()),
                 "invalid image blob"
             );
+            let dimensions = (
+                image["aspectRatio"]["width"].as_u64(),
+                image["aspectRatio"]["height"].as_u64(),
+            );
             ensure!(
-                image["aspectRatio"]["width"] == crate::media::WIDTH
-                    && image["aspectRatio"]["height"] == crate::media::HEIGHT,
+                matches!(
+                    dimensions,
+                    (Some(3200), Some(4000)) | (Some(3200), Some(3200))
+                ),
                 "invalid card dimensions"
             );
         }

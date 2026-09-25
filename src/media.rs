@@ -1,5 +1,5 @@
 //! Native announcement cards. Street View is kept intact, including Google's attribution.
-use crate::{config::Config, normalize::Observation, render};
+use crate::{config::Config, normalize::Observation, permits::Permit, render};
 use anyhow::{Context, Result, ensure};
 use fontdue::{Font, FontSettings};
 use image::{ExtendedColorType, ImageReader, RgbImage, codecs::jpeg::JpegEncoder};
@@ -21,14 +21,21 @@ pub struct PostImage {
     pub bytes: Vec<u8>,
     pub alt: String,
     pub quality: u8,
+    pub width: u32,
+    pub height: u32,
 }
 impl PostImage {
     pub fn embed(&self, blob: Value) -> Value {
-        json!({"$type":"app.bsky.embed.images","images":[{"image":blob,"alt":self.alt,"aspectRatio":{"width":WIDTH,"height":HEIGHT}}]})
+        json!({"$type":"app.bsky.embed.images","images":[{"image":blob,"alt":self.alt,"aspectRatio":{"width":self.width,"height":self.height}}]})
     }
 }
 
 pub fn render(config: &Config, obs: &Observation) -> Result<PostImage> {
+    let photo = street_view(config, obs)?;
+    render_card(obs, &photo)
+}
+
+fn street_view(config: &Config, obs: &Observation) -> Result<RgbImage> {
     let key = match &config.media.google_api_key_file {
         Some(path) => std::fs::read_to_string(path).context("read Google Maps API key file")?,
         None => std::env::var("GOOGLE_MAPS_API_KEY")
@@ -64,7 +71,150 @@ pub fn render(config: &Config, obs: &Observation) -> Result<PostImage> {
         photo.dimensions() == (640, 360),
         "unexpected Street View dimensions"
     );
-    render_card(obs, &photo)
+    Ok(photo)
+}
+
+pub fn render_permit(config: &Config, obs: &Observation, permit: &Permit) -> Result<PostImage> {
+    let photo = street_view(config, obs)?;
+    render_permit_card(obs, permit, &photo)
+}
+
+pub fn render_permit_card(
+    obs: &Observation,
+    permit: &Permit,
+    photo: &RgbImage,
+) -> Result<PostImage> {
+    // Keep the established Chicago type, color, Street View, and source treatment.
+    let mut canvas = Pixmap::new(WIDTH, HEIGHT).context("allocate permit card")?;
+    canvas.fill(hex(0x000000));
+    let headline = Font::from_bytes(
+        include_bytes!("../assets/fonts/BigShouldersText-Bold.ttf") as &[u8],
+        FontSettings::default(),
+    )
+    .map_err(|_| anyhow::anyhow!("invalid headline font"))?;
+    let body = Font::from_bytes(
+        include_bytes!("../assets/fonts/Roboto.ttf") as &[u8],
+        FontSettings::default(),
+    )
+    .map_err(|_| anyhow::anyhow!("invalid body font"))?;
+    rect(&mut canvas, 0., 0., 1080., 10., BLUE);
+    for i in 0..4 {
+        star(&mut canvas, 850. + i as f32 * 51., 58., 18.);
+    }
+    text(&mut canvas, &body, "BUILDING PERMIT", 48., 139., 25., BLUE);
+    fitted(
+        &mut canvas,
+        &headline,
+        &render::unit_name(obs).to_uppercase(),
+        48.,
+        291.,
+        150.,
+        WHITE,
+    );
+    fitted(
+        &mut canvas,
+        &headline,
+        "PERMIT ISSUED",
+        48.,
+        437.,
+        158.,
+        WHITE,
+    );
+    rect(&mut canvas, 48., 475., 66., 7., RED);
+    fitted(
+        &mut canvas,
+        &headline,
+        &render::address(obs).to_uppercase(),
+        48.,
+        548.,
+        58.,
+        WHITE,
+    );
+    let mut details = Vec::new();
+    if let Some(n) = obs.number("adu_applying_for").filter(|n| *n > 0) {
+        details.push(format!(
+            "{n} {} PROPOSED",
+            if n == 1 { "ADU" } else { "ADUS" }
+        ));
+    }
+    if let Some(ward) = obs.number("ward").filter(|n| (1..=50).contains(n)) {
+        details.push(format!("WARD {ward}"));
+    }
+    if let Some(date) = permit.date("issue_date") {
+        details.push(date.format("%b %-d, %Y").to_string().to_uppercase());
+    }
+    fitted(
+        &mut canvas,
+        &body,
+        &details.join("   /   "),
+        48.,
+        596.,
+        24.,
+        BLUE,
+    );
+    let photo_height = (WIDTH as f64 * photo.height() as f64 / photo.width() as f64).round() as u32;
+    ensure!(photo_height <= 1800, "photo must fit the landscape panel");
+    let photo = image::imageops::resize(
+        photo,
+        WIDTH,
+        photo_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let top = (624. * SCALE).round() as u32;
+    for (x, y, pixel) in photo.enumerate_pixels() {
+        let offset = (((top + y) * WIDTH + x) * 4) as usize;
+        canvas.data_mut()[offset..offset + 3].copy_from_slice(&pixel.0);
+        canvas.data_mut()[offset + 3] = 255;
+    }
+    text(
+        &mut canvas,
+        &body,
+        "ISSUED BY CITY OF CHICAGO",
+        48.,
+        1281.,
+        31.,
+        WHITE,
+    );
+    fitted(
+        &mut canvas,
+        &body,
+        &format!("PERMIT #{}  /  UNOFFICIAL FEED", permit.number),
+        48.,
+        1321.,
+        20.,
+        GRAY,
+    );
+    rect(&mut canvas, 0., 1340., 1080., 10., BLUE);
+    drop(headline);
+    drop(body);
+    let mut rgb = canvas.take();
+    let pixels = rgb.len() / 4;
+    for pixel in 0..pixels {
+        rgb.copy_within(pixel * 4..pixel * 4 + 3, pixel * 3);
+    }
+    rgb.truncate(pixels * 3);
+    let (bytes, quality) = jpeg(&rgb, WIDTH, HEIGHT, MAX_IMAGE_BYTES)?;
+    let alt = format!(
+        "Chicago building permit announcement. {} at {}, Chicago. Permit {} issued {}. {} ADUs proposed in housing preapproval application {}. Street View imagery depicts street-facing context and may predate the project. Data: City of Chicago. Unofficial community feed.",
+        render::unit_name(obs),
+        render::address(obs),
+        permit.number,
+        permit
+            .date("issue_date")
+            .map(|d| d.to_string())
+            .unwrap_or_default(),
+        obs.number("adu_applying_for")
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "Unknown number of".into()),
+        obs.id
+    );
+    Ok(PostImage {
+        bytes,
+        alt,
+        quality,
+        width: WIDTH,
+        height: HEIGHT,
+    })
 }
 
 fn fetch(config: &Config, url: &str) -> Result<Vec<u8>> {
@@ -243,6 +393,8 @@ pub fn render_card(obs: &Observation, photo: &RgbImage) -> Result<PostImage> {
         bytes,
         alt: image_alt(obs),
         quality,
+        width: WIDTH,
+        height: HEIGHT,
     })
 }
 
@@ -369,4 +521,148 @@ fn text(
         }
         pen += metrics.advance_width;
     }
+}
+
+/// Native geographic companion card using the same Chicago type and color system.
+pub fn map_card(
+    base: &RgbImage,
+    label: &str,
+    title: &str,
+    bounds: &crate::maps::Bounds,
+    marker: Option<(f64, f64)>,
+    rings: Option<&[Vec<(f64, f64)>]>,
+    alt: String,
+) -> Result<PostImage> {
+    const MAP_HEIGHT: u32 = 2000;
+    const MAP_TOP: u32 = 948;
+    ensure!(base.dimensions() == (640, 400), "unexpected basemap size");
+    let mut canvas = Pixmap::new(WIDTH, WIDTH).context("allocate map card")?;
+    canvas.fill(hex(0x000000));
+    let headline = Font::from_bytes(
+        include_bytes!("../assets/fonts/BigShouldersText-Bold.ttf") as &[u8],
+        FontSettings::default(),
+    )
+    .map_err(|_| anyhow::anyhow!("invalid headline font"))?;
+    let body = Font::from_bytes(
+        include_bytes!("../assets/fonts/Roboto.ttf") as &[u8],
+        FontSettings::default(),
+    )
+    .map_err(|_| anyhow::anyhow!("invalid body font"))?;
+    rect(&mut canvas, 0., 0., 1080., 8., BLUE);
+    for i in 0..4 {
+        star(&mut canvas, 850. + i as f32 * 51., 58., 18.);
+    }
+    text(&mut canvas, &body, label, 48., 139., 25., BLUE);
+    fitted(
+        &mut canvas,
+        &headline,
+        &title.to_uppercase(),
+        48.,
+        255.,
+        86.,
+        WHITE,
+    );
+    let resized = image::imageops::resize(
+        base,
+        WIDTH,
+        MAP_HEIGHT,
+        image::imageops::FilterType::Lanczos3,
+    );
+    for (x, y, pixel) in resized.enumerate_pixels() {
+        let offset = (((MAP_TOP + y) * WIDTH + x) * 4) as usize;
+        canvas.data_mut()[offset..offset + 3].copy_from_slice(&pixel.0);
+        canvas.data_mut()[offset + 3] = 255;
+    }
+    drop(resized);
+    let project = |lon: f64, lat: f64| -> (f32, f32) {
+        (
+            ((lon - bounds.west) / (bounds.east - bounds.west) * WIDTH as f64) as f32,
+            (MAP_TOP as f64
+                + (bounds.north - lat) / (bounds.north - bounds.south) * MAP_HEIGHT as f64)
+                as f32,
+        )
+    };
+    if let Some(rings) = rings {
+        for ring in rings {
+            let mut path = PathBuilder::new();
+            for (index, (lon, lat)) in ring.iter().enumerate() {
+                let (x, y) = project(*lon, *lat);
+                if index == 0 {
+                    path.move_to(x, y)
+                } else {
+                    path.line_to(x, y)
+                }
+            }
+            path.close();
+            if let Some(path) = path.finish() {
+                let mut stroke = tiny_skia::Stroke {
+                    width: 13.,
+                    ..Default::default()
+                };
+                canvas.stroke_path(&path, &paint(WHITE), &stroke, Transform::identity(), None);
+                stroke.width = 7.;
+                canvas.stroke_path(&path, &paint(RED), &stroke, Transform::identity(), None);
+            }
+        }
+    }
+    if let Some((lon, lat)) = marker {
+        let (x, y) = project(lon, lat);
+        let mut outer = PathBuilder::new();
+        outer.push_circle(x, y, 35.);
+        if let Some(path) = outer.finish() {
+            canvas.fill_path(
+                &path,
+                &paint(WHITE),
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+        let mut inner = PathBuilder::new();
+        inner.push_circle(x, y, 23.);
+        if let Some(path) = inner.finish() {
+            canvas.fill_path(
+                &path,
+                &paint(RED),
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+    text(
+        &mut canvas,
+        &body,
+        "Map: Esri World Street Map  /  Ward: Cook County GIS  /  Permit: City of Chicago",
+        30.,
+        1022.,
+        14.,
+        WHITE,
+    );
+    fitted(
+        &mut canvas,
+        &body,
+        "Esri, DeLorme, HERE, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China, Esri Thailand, MapmyIndia, TomTom",
+        30.,
+        1051.,
+        10.,
+        GRAY,
+    );
+    rect(&mut canvas, 0., 1072., 1080., 8., BLUE);
+    drop(headline);
+    drop(body);
+    let mut rgb = canvas.take();
+    let pixels = rgb.len() / 4;
+    for pixel in 0..pixels {
+        rgb.copy_within(pixel * 4..pixel * 4 + 3, pixel * 3);
+    }
+    rgb.truncate(pixels * 3);
+    let (bytes, quality) = jpeg(&rgb, WIDTH, WIDTH, MAX_IMAGE_BYTES)?;
+    Ok(PostImage {
+        bytes,
+        alt,
+        quality,
+        width: WIDTH,
+        height: WIDTH,
+    })
 }

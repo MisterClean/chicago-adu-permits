@@ -2,11 +2,13 @@
 
 ## Source contract
 
-The sole v1 source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it.
+The preapproval source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it. Schema 2 adds a separate issued-permit candidate scan from `ydr8-5enu`; its source identity is the permit row ID and its public identity is the permit number.
 
 `normalize::FIELDS` defines the query allowlist and expected metadata types. The selected source payload is retained per observed content version, alongside normalized fields. Missing and explicit null compare equally; integral decimal strings/numbers canonicalize without floating point. Optional invalid values generate issues and omit claims. Required invalid identifiers reject the entire scan. Added unused columns are ignored; any changed/missing selected column type rejects the scan.
 
 SHA-256 hashes cover named canonical fields and contract version 1. Each successful run also records a digest of its ordered `(application_id, content_hash)` sequence. No fetch time, platform state, or Socrata internal row ID affects content identity.
+
+Permit scans also verify source schema, revision, ordered keyset pages, and count agreement before promotion. They retain only matching fields, excluding permit contacts. Permit links preserve method, score, status, and review history. [Permit policy](permit-announcements.md) specifies automatic and review-required links. A permit event uses `(preapproval application ID, permit number)`, and its root and map reply each have a separate frozen delivery identity.
 
 Floating source timestamps retain their original naive strings. The baseline date uses America/Chicago as an explicit operational assumption. Observation and delivery timestamps are UTC. Invalid or future source dates hold qualifying decisions. Posts use calendar dates, not invented timezones.
 

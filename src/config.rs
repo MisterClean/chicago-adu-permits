@@ -6,6 +6,7 @@ use std::{
 };
 
 pub const DATASET: &str = "j4h8-ug9m";
+pub const PERMIT_DATASET: &str = "ydr8-5enu";
 
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]

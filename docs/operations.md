@@ -24,6 +24,8 @@ The source revision is `rowsUpdatedAt`, not an update SLA. Changes between polls
 
 ## Review and recovery
 
+Building-permit match reviews and map-reply recovery use the same durable state directory. See [permit announcements](permit-announcements.md) for the separate permit baseline, review commands, and two-image reply. After schema-2 migration, run `ingest-permits` with publishing disabled before treating `check --health` as green.
+
 ```sh
 adu-bot --config /etc/adu-bot/config.toml queue list
 adu-bot --config /etc/adu-bot/config.toml queue inspect 'chicago:j4h8-ug9m:123:preapproval-first-observed:v1'

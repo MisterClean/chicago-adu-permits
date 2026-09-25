@@ -2,8 +2,11 @@
 use anyhow::{Result, ensure};
 use rusqlite::Connection;
 
-pub const CURRENT: i64 = 1;
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/001_initial.sql")];
+pub const CURRENT: i64 = 2;
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/001_initial.sql"),
+    include_str!("../migrations/002_permits.sql"),
+];
 
 pub fn apply(db: &mut Connection) -> Result<()> {
     apply_steps(db, MIGRATIONS)

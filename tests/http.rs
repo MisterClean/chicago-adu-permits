@@ -450,6 +450,8 @@ fn image_upload_refreshes_auth_and_preserves_blob_and_alt_in_post() {
             bytes,
             alt: "Permit preapproval card".into(),
             quality: 100,
+            width: 3200,
+            height: 4000,
         },
     )
     .unwrap();
@@ -478,6 +480,8 @@ fn rejected_upload_never_creates_a_text_only_post() {
                 bytes: vec![1, 2],
                 alt: "Card".into(),
                 quality: 100,
+                width: 3200,
+                height: 4000,
             },
         )
         .unwrap_err();
