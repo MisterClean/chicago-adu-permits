@@ -565,11 +565,18 @@ fn map_alts(snapshot: &Snapshot) -> (String, String) {
         snapshot.ward
     );
     let ward_alt = format!(
-        "Ward {} outlined with {} mapped application pins. Wardwide total: {} requested ADUs across {} qualifying applications. A red ring marks {}. Rank {} of 50 wards by requested ADUs. Submitted since April 1, 2026; as of {}. Counts are requested units, not building permits or completed homes. Application coordinates: City of Chicago Data Portal. Boundary: Cook County. Basemap: OpenMapTiles and OpenStreetMap.",
+        "Ward {} outlined with {} mapped application{} pinned. Wardwide total: {} requested ADU{} across {} qualifying application{}. A red ring marks {}. Rank {} of 50 wards by requested ADUs. Submitted since April 1, 2026; as of {}. Counts are requested units, not building permits or completed homes. Application coordinates: City of Chicago Data Portal. Boundary: Cook County. Basemap: OpenMapTiles and OpenStreetMap.",
         snapshot.ward,
         snapshot.mapped_applications,
+        if snapshot.mapped_applications == 1 {
+            ""
+        } else {
+            "s"
+        },
         snapshot.adus,
+        if snapshot.adus == 1 { "" } else { "s" },
         snapshot.applications,
+        if snapshot.applications == 1 { "" } else { "s" },
         snapshot.focus.address,
         snapshot.rank,
         snapshot.as_of
@@ -622,6 +629,7 @@ mod tests {
             .encode_image(&image)
             .unwrap();
         let (n_alt, w_alt) = map_alts(&snapshot);
+        assert!(w_alt.contains("1 mapped application pinned"));
         fs::write(dir.path().join("text.txt"), snapshot.text()).unwrap();
         fs::write(dir.path().join("n5.alt.txt"), n_alt).unwrap();
         fs::write(dir.path().join("wc.alt.txt"), w_alt).unwrap();
