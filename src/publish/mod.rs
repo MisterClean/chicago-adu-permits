@@ -1,4 +1,5 @@
 pub mod bluesky;
+pub mod scorecards;
 
 use crate::{
     config::{Config, DATASET},

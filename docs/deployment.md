@@ -2,7 +2,7 @@
 
 The CI workflow checks both supported development platforms, then builds Linux x86-64
 executables on Ubuntu 24.04. Only a successful push to `main` publishes a `build-<commit>`
-release. The release contains two executables, checksums, and a schema manifest. It never
+release. The release contains two executables, the checked map-renderer assets, checksums, and a schema manifest. It never
 contains runtime configuration, secrets, databases, sessions, or deployment inventories.
 The Rust toolchain is pinned so lint changes cannot unexpectedly block a release.
 
@@ -67,3 +67,13 @@ Take daily consistent backups, retain 30 days, and copy them off-host using the 
 backup system. Rotate dated deployment backups as well. Check disk capacity before migrations.
 Monitor Petit failures and `check --health`, plus queue age and corrections from `status`.
 Deployment success alone does not prove a future external API call will succeed.
+
+## Scorecard worker
+
+Schema 2 adds map locations and reply deliveries. The updater verifies the seven renderer assets against the manifest and installs them under `/opt/adu-bot/current/map-renderer` when that is the configured install path. The updater does not update itself, so install the new `adu-bot-updater` binary through the existing operator procedure **before** it attempts to activate a schema-2 release. Keep `[scorecards].enabled = false` during this code and schema upgrade. A full post-migration ingest is required before a scorecard can use the new map locations; it does not reset or resend the root queue.
+
+The example scorecard systemd unit and Petit job are separate from the native announcement worker. Point `[scorecards].renderer_dir` to `/opt/adu-bot/current/map-renderer` and set `node_bin` and `chrome_bin` to installed absolute executable paths. The renderer needs Chrome software WebGL and network access to OpenFreeMap/OpenMapTiles and Cook County. A 1536 MiB `MemoryMax` only constrains the worker; it does not supply RAM. Measure a source-backed `scorecards preview` on the intended host with the service's limits before enabling the schedule. If the host lacks the capacity, provision a renderer-capable host rather than enabling this unit there. Do not run two workers against independent copies of the same SQLite database.
+
+The Petit schedule starts the scorecard service at minutes 12, 27, 42, and 57 UTC, offset from the main schedule. Install the new unit and Petit job through the normal operator process, run the explicit activation step in [operations](operations.md#scorecard-activation-and-recovery), and then enable the job. Monitor its exit status, structured journal events, `scorecards list`, and `check --health`. Reply failures never require replaying the parent announcement.
+
+For the one-time missed-reply backfill on a memory-constrained host, keep the automatic scorecard schedule disabled and use `scorecards run-prepared` with matching previews rendered on a separate capable machine. This uses the same durable reply outbox and live PDS reconciliation, but no Node or Chrome process on the production host. Source evidence must match the production database at send time. A future automatic scorecard schedule still requires renderer capacity.

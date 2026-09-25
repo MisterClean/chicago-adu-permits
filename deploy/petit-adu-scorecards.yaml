@@ -1,0 +1,18 @@
+id: adu_scorecards
+name: adu-scorecards
+enabled: true
+schedule:
+  cron: "0 12,27,42,57 * * * *"
+  timezone: UTC
+max_concurrency: 1
+tasks:
+  - id: execute
+    type: command
+    command: /usr/bin/systemctl
+    args: [start, --wait, adu-bot-scorecards.service]
+    working_dir: /tmp
+    timeout_secs: 260
+    retry:
+      max_attempts: 0
+      delay_secs: 0
+      condition: never

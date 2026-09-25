@@ -22,6 +22,29 @@ Check exit codes and status after each scheduled run. Alert on failed runs, unkn
 
 The source revision is `rowsUpdatedAt`, not an update SLA. Changes between polls can be missed. A large count decrease fails closed and retains staging for inspection; there is no automatic override switch. Confirm the cause before changing the contract or threshold in a reviewed release.
 
+## Scorecard activation and recovery
+
+The second-post worker is independent of the announcement worker and is off by default. Schema 2 stores a map location alongside each current application and adds a reply outbox without changing root delivery identities. After migration, complete an `ingest` before previewing or sending scorecards: the scorecard refuses a mixture of old rows and newly mapped rows. Keep `[scorecards].enabled = false` while checking the maps and the renderer host. `scorecards preview APPLICATION_ID --output-dir /path/to/new/dir` uses the latest complete source scan for a currently qualifying application, fetches its official ward boundary, and writes `n5.jpg`, `wc.jpg`, both alt text files, post text, and the source snapshot. It does not need a sent parent, authenticate, or post. The output directory must not contain files of those names.
+
+Install Node 20+ and Chrome with working software WebGL on the renderer host. Confirm that its physical memory and process limits can finish a real preview with room for the ingestion worker; the scorecard service's 1536 MiB limit is a cap, not provisioned memory. Use a larger or separate renderer host if the current host cannot meet that requirement. Rendering requires outbound tile, glyph, sprite, and Cook County boundary access. Failures leave the reply queued with an error and retry time. Map images are checked for 2160 × 2160 dimensions and Bluesky's 2,000,000-byte limit before upload.
+
+To activate automatic replies, set the production DID, `publish_enabled = true`, `[scorecards].enabled = true`, and the release's absolute `renderer_dir`. Run `scorecards run` once **before the next announcement send** to establish the activation time; this first invocation does not queue older sent roots. Then enable the separate Petit scorecard schedule. A new sent root is queued at the next scorecard run. The worker handles one reply per invocation and obeys the shared minimum send interval. `scorecards list` shows all reply states; `status --json` reports counts and oldest queue age. `check --health` includes held/failed replies and flags an enabled reply queue older than 24 hours. Watch `scorecard_sent`, `scorecard_held`, and `scorecard_delivery_error` in the scorecard service journal.
+
+Historical roots are deliberately excluded from automatic queueing. After verifying that each parent exists on the configured account and that its current application still belongs to the scorecard cohort, queue the missed September 24 announcements individually with a reason:
+
+```sh
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 955117 --reason 'Reviewed September 24 missed reply'
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 955240 --reason 'Reviewed September 24 missed reply'
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 955259 --reason 'Reviewed September 24 missed reply'
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 955744 --reason 'Reviewed September 24 missed reply'
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 956988 --reason 'Reviewed September 24 missed reply'
+adu-bot --config /etc/adu-bot/config.toml scorecards enqueue 957212 --reason 'Reviewed September 24 missed reply'
+```
+
+`enqueue` never posts by itself and is idempotent for a parent. Review preview images and text first, then let the scheduled worker send them one at a time. Verify each resulting URI is a reply whose root and parent both match the original announcement. If a reply is held or failed, use `scorecards inspect REPLY_ID` to examine its `last_error`, frozen record, and attempt history before `scorecards retry REPLY_ID --reason TEXT`. Retry preserves any frozen record key and payload. Never queue another parent announcement to repair its reply. If a source value becomes unknown or the focus pin fails the ward-boundary check, correct or review the source evidence before retrying; the worker will not invent a count or map coordinate.
+
+On a host too small to run Chrome, use a consistent **copy** of its post-migration database on a renderer-capable machine to run `scorecards preview APPLICATION_ID --output-dir DIR` for each reviewed backfill. Transfer each complete preview directory into a private location readable by the production service user. After `scorecards enqueue` returns a reply ID, run `scorecards run-prepared REPLY_ID --input-dir DIR` on the production host. This explicit one-time command works while `[scorecards].enabled = false`, but still requires `publish_enabled = true`, a verified parent receipt on the PDS, and an unpaused adapter. On first preparation it computes the production source snapshot; later retries reuse that frozen snapshot. It requires exact agreement with `snapshot.json`, text, alt text, and both valid 2160 × 2160 JPEGs before uploading. If the production source snapshot changed after the copy, repeat the preview from a fresh copy. Run one reply at a time with at least the configured minimum send interval, and inspect each receipt; the command exits with an error unless the reply is `sent`.
+
 ## Review and recovery
 
 ```sh

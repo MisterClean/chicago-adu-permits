@@ -22,9 +22,33 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("user_amended_date", "calendar_date"),
     ("action_date", "calendar_date"),
 ];
+pub const MAP_FIELDS: &[(&str, &str)] = &[("latitude", "number"), ("longitude", "number")];
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Location {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl Location {
+    pub fn valid(self) -> bool {
+        self.latitude.is_finite()
+            && self.longitude.is_finite()
+            && (41.5..=42.2).contains(&self.latitude)
+            && (-88.1..=-87.3).contains(&self.longitude)
+    }
+}
 pub fn select() -> String {
     FIELDS
         .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+pub fn source_select() -> String {
+    FIELDS
+        .iter()
+        .chain(MAP_FIELDS)
         .map(|(name, _)| *name)
         .collect::<Vec<_>>()
         .join(",")
@@ -71,6 +95,8 @@ pub struct Observation {
     pub raw: Value,
     pub hash: String,
     pub issues: Vec<String>,
+    #[serde(default)]
+    pub location: Option<Location>,
 }
 // Parse decimal spelling directly; no floating-point round trips, even for JSON numbers.
 pub fn integer(v: &Value) -> Result<i64> {
@@ -132,6 +158,39 @@ impl Observation {
             }
             canonical.insert(name.into(), normalized);
         }
+        for &(name, _) in MAP_FIELDS {
+            if let Some(value) = raw.get(name) {
+                selected.insert(name.into(), value.clone());
+            }
+        }
+        let coordinate = |name: &str| -> Option<f64> {
+            match raw.get(name)? {
+                Value::Number(value) => value.to_string().parse().ok(),
+                Value::String(value) => value.parse().ok(),
+                _ => None,
+            }
+        };
+        let location = match (raw.get("latitude"), raw.get("longitude")) {
+            (None | Some(Value::Null), None | Some(Value::Null)) => None,
+            _ => match (coordinate("latitude"), coordinate("longitude")) {
+                (Some(latitude), Some(longitude)) => {
+                    let point = Location {
+                        latitude,
+                        longitude,
+                    };
+                    if point.valid() {
+                        Some(point)
+                    } else {
+                        issues.push("invalid map coordinates".into());
+                        None
+                    }
+                }
+                _ => {
+                    issues.push("invalid map coordinates".into());
+                    None
+                }
+            },
+        };
         let canonical = Value::Object(canonical);
         let status = Status::classify(canonical["status"].as_str().unwrap_or(""));
         if status == Status::Unknown {
@@ -154,6 +213,7 @@ impl Observation {
             raw: Value::Object(selected),
             hash,
             issues,
+            location,
         })
     }
     pub fn number(&self, field: &str) -> Option<i64> {
