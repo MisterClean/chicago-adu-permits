@@ -81,6 +81,7 @@ cargo run --locked --example generate_avatar
 | `preview --application-id ID [--image PATH.jpg]` | Render current application facts and optionally a Street View card without queueing |
 | `scorecards preview ID --output-dir DIR` | Render both source-backed maps, alt text, post text, and frozen evidence locally without posting |
 | `scorecards run` | Prepare or reconcile and send one due scorecard reply when enabled |
+| `scorecards run-prepared REPLY_ID --input-dir DIR` | Send one queued reply from reviewed preview files, using the production outbox without running Chrome there |
 | `scorecards enqueue ID --reason TEXT` | Queue a reviewed historical sent announcement for a reply |
 | `scorecards list` | Show reply state, attempts, last error, and sent URI |
 | `scorecards inspect REPLY_ID` | Show parent and reply receipts, frozen evidence, payload, and attempt history |

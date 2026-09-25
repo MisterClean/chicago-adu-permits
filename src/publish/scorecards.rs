@@ -133,7 +133,40 @@ pub fn run(store: &mut Store, config: &Config, publisher: &mut Bluesky) -> Resul
         config.publish_enabled && config.scorecards.enabled,
         "scorecard publishing disabled"
     );
-    sync_new(store, publisher)?;
+    run_impl(store, config, publisher, None)
+}
+
+pub fn run_prepared(
+    store: &mut Store,
+    config: &Config,
+    publisher: &mut Bluesky,
+    id: i64,
+    input_dir: &Path,
+) -> Result<()> {
+    ensure!(config.publish_enabled, "publishing disabled");
+    ensure!(id > 0, "positive reply ID required");
+    run_impl(store, config, publisher, Some((id, input_dir)))?;
+    let state: String = store.db.query_row(
+        "SELECT state FROM reply_deliveries WHERE id=?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        state == "sent",
+        "reply {id} remains {state}; inspect and retry it"
+    );
+    Ok(())
+}
+
+fn run_impl(
+    store: &mut Store,
+    config: &Config,
+    publisher: &mut Bluesky,
+    prepared: Option<(i64, &Path)>,
+) -> Result<()> {
+    if prepared.is_none() {
+        sync_new(store, publisher)?;
+    }
     let paused: bool = store.db.query_row(
         "SELECT paused FROM adapter_state WHERE platform=?1 AND account_id=?2",
         params![publisher.platform(), publisher.account()],
@@ -148,11 +181,17 @@ pub fn run(store: &mut Store, config: &Config, publisher: &mut Bluesky) -> Resul
             })?;
     ensure!(!posting_paused, "publishing paused in database");
     let due:Option<DueReply>=store.db.query_row(
-        "SELECT r.id,r.parent_delivery_id,r.attempts,r.record_key,r.record_json,r.record_hash,r.snapshot_json,r.snapshot_hash,d.record_key,d.record_json,d.remote_uri,d.remote_cid FROM reply_deliveries r JOIN deliveries d ON d.id=r.parent_delivery_id WHERE d.platform=?1 AND d.account_id=?2 AND d.state='sent' AND r.state IN ('pending','prepared','sending','retry') AND r.next_attempt<=?3 ORDER BY CASE WHEN r.attempts>0 THEN 0 ELSE 1 END,r.id LIMIT 1",
-        params![publisher.platform(),publisher.account(),now()],
+        "SELECT r.id,r.parent_delivery_id,r.attempts,r.record_key,r.record_json,r.record_hash,r.snapshot_json,r.snapshot_hash,d.record_key,d.record_json,d.remote_uri,d.remote_cid FROM reply_deliveries r JOIN deliveries d ON d.id=r.parent_delivery_id WHERE d.platform=?1 AND d.account_id=?2 AND d.state='sent' AND r.state IN ('pending','prepared','sending','retry') AND r.next_attempt<=?3 AND (?4 IS NULL OR r.id=?4) ORDER BY CASE WHEN r.attempts>0 THEN 0 ELSE 1 END,r.id LIMIT 1",
+        params![publisher.platform(),publisher.account(),now(),prepared.map(|(id,_)|id)],
         |r|Ok(DueReply{id:r.get(0)?,parent:r.get(1)?,attempts:r.get(2)?,key:r.get(3)?,frozen:r.get(4)?,digest:r.get(5)?,snapshot:r.get(6)?,snapshot_hash:r.get(7)?,parent_key:r.get(8)?,parent_record:r.get(9)?,parent_uri:r.get(10)?,parent_cid:r.get(11)?}),
     ).optional()?;
-    let Some(due) = due else { return Ok(()) };
+    let Some(due) = due else {
+        ensure!(
+            prepared.is_none(),
+            "requested reply is not due; inspect its state and retry time"
+        );
+        return Ok(());
+    };
     if let (Some(key), Some(frozen)) = (&due.key, &due.frozen) {
         ensure!(
             due.digest.as_deref() == Some(hash(frozen).as_str()),
@@ -231,25 +270,36 @@ pub fn run(store: &mut Store, config: &Config, publisher: &mut Bluesky) -> Resul
         )?;
         snapshot
     };
+    if let Some((_, input_dir)) = prepared {
+        let supplied: Snapshot =
+            serde_json::from_slice(&fs::read(input_dir.join("snapshot.json"))?)?;
+        ensure!(
+            serde_json::to_value(&supplied)? == serde_json::to_value(&snapshot)?,
+            "prepared maps do not match the frozen source snapshot"
+        );
+    }
     let work = config
         .state_dir
         .join("scorecard-work")
         .join(due.id.to_string());
-    let images = match render_maps(config, &work, &snapshot) {
-        Ok(images) => images,
-        Err(error) => {
-            failure(
-                store,
-                due.id,
-                publisher,
-                &DeliveryError::Retry {
-                    message: format!("render scorecard: {error:#}"),
-                    after: Some(900),
-                },
-                due.attempts + 1,
-            )?;
-            return Ok(());
-        }
+    let images = match prepared {
+        Some((_, input_dir)) => read_prepared(input_dir, &snapshot)?,
+        None => match render_maps(config, &work, &snapshot) {
+            Ok(images) => images,
+            Err(error) => {
+                failure(
+                    store,
+                    due.id,
+                    publisher,
+                    &DeliveryError::Retry {
+                        message: format!("render scorecard: {error:#}"),
+                        after: Some(900),
+                    },
+                    due.attempts + 1,
+                )?;
+                return Ok(());
+            }
+        },
     };
     let mut record = scorecard::reply_record(
         &snapshot,
@@ -423,6 +473,35 @@ fn failure(
     Ok(())
 }
 
+fn read_prepared(input_dir: &Path, snapshot: &Snapshot) -> Result<Vec<(Vec<u8>, String)>> {
+    ensure!(
+        fs::read_to_string(input_dir.join("text.txt"))? == snapshot.text(),
+        "prepared post text differs from snapshot"
+    );
+    let (neighborhood_alt, ward_alt) = map_alts(snapshot);
+    let mut images = Vec::with_capacity(2);
+    for (name, alt_name, expected_alt) in [
+        ("n5.jpg", "n5.alt.txt", neighborhood_alt),
+        ("wc.jpg", "wc.alt.txt", ward_alt),
+    ] {
+        ensure!(
+            fs::read_to_string(input_dir.join(alt_name))? == expected_alt,
+            "prepared map alt text differs from snapshot"
+        );
+        let bytes = fs::read(input_dir.join(name))?;
+        ensure!(valid_jpeg(&bytes), "invalid prepared map JPEG");
+        let dimensions =
+            image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Jpeg)
+                .into_dimensions()?;
+        ensure!(
+            dimensions == (2160, 2160),
+            "invalid prepared map dimensions"
+        );
+        images.push((bytes, expected_alt));
+    }
+    Ok(images)
+}
+
 fn render_maps(
     config: &Config,
     work: &Path,
@@ -469,6 +548,11 @@ fn render_maps(
         "invalid rendered JPEGs"
     );
     fs::remove_dir_all(work)?;
+    let (neighborhood_alt, ward_alt) = map_alts(snapshot);
+    Ok(vec![(neighborhood, neighborhood_alt), (ward, ward_alt)])
+}
+
+fn map_alts(snapshot: &Snapshot) -> (String, String) {
     let neighborhood_alt = format!(
         "Oblique neighborhood map centered on {}, marked by a red pin among existing building volumes. {} ADU{} requested in Ward {}. Streets, transit, and named places provide context; buildings do not show the proposed ADU. Coordinates: City of Chicago Data Portal. Basemap: OpenMapTiles and OpenStreetMap.",
         snapshot.focus.address,
@@ -490,7 +574,7 @@ fn render_maps(
         snapshot.rank,
         snapshot.as_of
     );
-    Ok(vec![(neighborhood, neighborhood_alt), (ward, ward_alt)])
+    (neighborhood_alt, ward_alt)
 }
 
 fn valid_jpeg(bytes: &[u8]) -> bool {
@@ -503,6 +587,50 @@ fn valid_jpeg(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{normalize::Location, scorecard::Point};
+
+    #[test]
+    fn prepared_maps_require_matching_text_alt_and_jpeg_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = Snapshot {
+            source_run: 1,
+            as_of: "2026-09-24".into(),
+            cohort_start: "2026-04-01".into(),
+            ward: 43,
+            applications: 1,
+            adus: 1,
+            rank: 1,
+            tied: false,
+            city_adus: 1,
+            city_applications: 1,
+            mapped_applications: 1,
+            focus: Point {
+                id: "123".into(),
+                address: "1 W TEST ST".into(),
+                quantity: 1,
+                location: Location {
+                    latitude: 41.9,
+                    longitude: -87.6,
+                },
+            },
+            points: Vec::new(),
+            boundary: json!({}),
+        };
+        let mut jpeg = Vec::new();
+        let image = image::RgbImage::from_pixel(2160, 2160, image::Rgb([255, 255, 255]));
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 80)
+            .encode_image(&image)
+            .unwrap();
+        let (n_alt, w_alt) = map_alts(&snapshot);
+        fs::write(dir.path().join("text.txt"), snapshot.text()).unwrap();
+        fs::write(dir.path().join("n5.alt.txt"), n_alt).unwrap();
+        fs::write(dir.path().join("wc.alt.txt"), w_alt).unwrap();
+        fs::write(dir.path().join("n5.jpg"), &jpeg).unwrap();
+        fs::write(dir.path().join("wc.jpg"), &jpeg).unwrap();
+        assert_eq!(read_prepared(dir.path(), &snapshot).unwrap().len(), 2);
+        fs::write(dir.path().join("text.txt"), "changed").unwrap();
+        assert!(read_prepared(dir.path(), &snapshot).is_err());
+    }
 
     #[test]
     fn activation_excludes_history_and_queues_new_sent_roots_once() {

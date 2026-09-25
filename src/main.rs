@@ -102,6 +102,12 @@ enum AdapterCommand {
 enum ScorecardCommand {
     /// Prepare and publish one due scorecard reply.
     Run,
+    /// Send a queued reply using locally rendered, source-verified maps.
+    RunPrepared {
+        id: i64,
+        #[arg(long)]
+        input_dir: PathBuf,
+    },
     /// Render the source-backed reply locally without authenticating or posting.
     Preview {
         application_id: String,
@@ -184,6 +190,9 @@ fn run() -> Result<()> {
                     | Command::Scorecards {
                         action: ScorecardCommand::Run
                     }
+                    | Command::Scorecards {
+                        action: ScorecardCommand::RunPrepared { .. }
+                    }
             ),
         "deployment recovery required; runtime is blocked"
     );
@@ -214,6 +223,13 @@ fn run() -> Result<()> {
             ScorecardCommand::Run => {
                 scorecards::run(&mut store, &config, &mut Bluesky::new(&config)?)?
             }
+            ScorecardCommand::RunPrepared { id, input_dir } => scorecards::run_prepared(
+                &mut store,
+                &config,
+                &mut Bluesky::new(&config)?,
+                id,
+                &input_dir,
+            )?,
             ScorecardCommand::Preview {
                 application_id,
                 output_dir,
