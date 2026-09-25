@@ -2,11 +2,13 @@
 
 ## Source contract
 
-The sole v1 source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it.
+The preapproval source is `j4h8-ug9m` on `data.cityofchicago.org`. Application identity is `(dataset_id, id)`; identical addresses do not merge applications. No predecessor dataset is automatically combined with it. Schema 3 adds a separate issued-permit candidate scan from `ydr8-5enu`; its source identity is the permit row ID and its public identity is the permit number.
 
 `normalize::FIELDS` defines the announcement-fact allowlist and expected metadata types. `normalize::MAP_FIELDS` adds City latitude/longitude for scorecards; these are kept in the current map-location table and do not change the announcement content hash or event identity. The selected announcement payload is retained per observed content version, alongside normalized fields. Missing and explicit null compare equally; integral decimal strings/numbers canonicalize without floating point. Optional invalid values generate issues and omit claims. Required invalid identifiers reject the entire scan. Added unused columns are ignored; any changed/missing selected column type rejects the scan.
 
 SHA-256 hashes cover named canonical fields and contract version 1. Each successful run also records a digest of its ordered `(application_id, content_hash)` sequence. No fetch time, platform state, or Socrata internal row ID affects content identity.
+
+Permit scans also verify source schema, revision, ordered keyset pages, and count agreement before promotion. They retain only matching fields, excluding permit contacts. Permit links preserve method, score, status, and review history. [Permit policy](permit-announcements.md) specifies automatic and review-required links. A permit event uses `(preapproval application ID, permit number)`, and its root and map reply each have a separate frozen delivery identity.
 
 Floating source timestamps retain their original naive strings. The baseline date uses America/Chicago as an explicit operational assumption. Observation and delivery timestamps are UTC. Invalid or future source dates hold qualifying decisions. Posts use calendar dates, not invented timezones.
 
@@ -48,7 +50,7 @@ Template v2 prepares a native JPEG with project-address Street View, plain-langu
 
 Bluesky uses a 13-character, persisted monotonic TID and a guarded create via `putRecord`. Structural equality with the frozen record yields a sent receipt. Different content holds a conflict. Only an explicit PDS `RecordNotFound` permits another guarded write. Failed reads never mean absence. Sent receipts are terminal even if someone deletes the remote post.
 
-The optional scorecard reply has a separate outbox and attempt history keyed to the sent parent delivery. Its own frozen map evidence and reply record preserve the original root/parent URI and CID. A response lost after the reply write is reconciled by its existing key before another guarded write. Rendering uses a separately scheduled Node/Chrome process, not the native announcement worker. Map or upload failure never resends or mutates the parent announcement.
+The optional scorecard reply has a separate outbox and attempt history keyed to the sent parent delivery. Its own frozen map evidence and reply record preserve the original root/parent URI and CID. A response lost after the reply write is reconciled by its existing key before another guarded write. Scorecards render in a separately scheduled Node/Chrome process. Permit replies reuse that renderer from the main publishing worker. Map or upload failure never resends or mutates the parent announcement.
 
 The account adapter handles login, session persistence/refresh, returned DID verification, PDS routing, HTTP error classification, and receipts. Shared queue code handles freshness/evidence gates, attempts, pacing, review, and scheduling. The `Publisher` interface includes identity allocation and template versioning. A second platform implements these alongside its own rendering and recovery semantics; do not assume TID or create-if-absent support on Threads.
 

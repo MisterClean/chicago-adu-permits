@@ -25,6 +25,11 @@ boundary with padding and uses numbered, shaded markers for requested ADUs.
 The selected design omits the legend and callout text, uses a left-aligned date
 caption, and right-aligns source credits.
 
+Permit replies use this same live renderer with a permit snapshot. Their ward
+markers represent preapproved sites with confirmed issued building permits;
+the marker number counts permits at that site, and a red ring identifies the
+current permit's site. This keeps permit counts separate from requested ADUs.
+
 ## Public sample data
 
 - `points.json`: 13 public project locations and requested ADU quantities from

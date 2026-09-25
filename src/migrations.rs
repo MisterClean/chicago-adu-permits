@@ -2,10 +2,11 @@
 use anyhow::{Result, ensure};
 use rusqlite::Connection;
 
-pub const CURRENT: i64 = 2;
+pub const CURRENT: i64 = 3;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_initial.sql"),
     include_str!("../migrations/002_scorecards.sql"),
+    include_str!("../migrations/003_permits.sql"),
 ];
 
 pub fn apply(db: &mut Connection) -> Result<()> {
@@ -98,13 +99,47 @@ mod tests {
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
         assert_eq!(
             db.query_row("SELECT count(*) FROM reply_deliveries", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn permit_upgrade_preserves_existing_scorecard_state() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        apply_steps(&mut db, &MIGRATIONS[..2]).unwrap();
+        db.execute(
+            "INSERT INTO scorecard_state(id,activated_at) VALUES(1,123)",
+            [],
+        )
+        .unwrap();
+        apply(&mut db).unwrap();
+        let activated: i64 = db
+            .query_row(
+                "SELECT activated_at FROM scorecard_state WHERE id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let permit_tables: i64 = db
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('permit_runs','permit_replies')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(activated, 123);
+        assert_eq!(permit_tables, 2);
+        assert_eq!(
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            3
         );
     }
 }

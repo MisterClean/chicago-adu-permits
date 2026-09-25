@@ -2,6 +2,7 @@ const BLUE='#41b6e6',RED='#e4002b';
 const [snapshot,base]=await Promise.all([fetch('/payload.json').then(r=>r.json()),fetch('/data/base-style.json').then(r=>r.json())]);
 const center=[snapshot.focus.location.longitude,snapshot.focus.location.latitude];
 const points=snapshot.points;
+const permit=snapshot.mode==='permit';
 const boundary=snapshot.boundary;
 const bounds=[Infinity,Infinity,-Infinity,-Infinity];
 function visit(c){if(typeof c[0]==='number'){bounds[0]=Math.min(bounds[0],c[0]);bounds[1]=Math.min(bounds[1],c[1]);bounds[2]=Math.max(bounds[2],c[0]);bounds[3]=Math.max(bounds[3],c[1]);}else c.forEach(visit);}
@@ -67,10 +68,11 @@ async function render(id){
  if(errors.length)throw Error(`Map errors: ${errors.slice(0,3).join('; ')}`);
  const canvas=document.createElement('canvas');canvas.width=canvas.height=2160;const ctx=canvas.getContext('2d');ctx.scale(2,2);
  ctx.fillStyle='#000';ctx.fillRect(0,0,1080,1080);ctx.fillStyle=BLUE;ctx.fillRect(0,0,1080,8);ctx.fillStyle=RED;for(let i=0;i<4;i++)star(ctx,874+i*47,44,16);
- label(ctx,ward?'THE WARD SO FAR':'AROUND THE PREAPPROVAL',42,55,21,BLUE);
+ label(ctx,ward?(permit?'THE WARD':'THE WARD SO FAR'):(permit?'AROUND THE PERMIT':'AROUND THE PREAPPROVAL'),42,55,21,BLUE);
  fitted(ctx,ward?`WARD ${snapshot.ward}`:snapshot.focus.address,42,133,995,ward?83:65);
  const rank=`${snapshot.tied?'TIED ':''}#${snapshot.rank} OF 50`;
- fitted(ctx,ward?`${snapshot.adus} ADUs  /  ${snapshot.applications} APPLICATIONS  /  ${rank}`:`${snapshot.focus.quantity} ADU${snapshot.focus.quantity===1?'':'s'} REQUESTED   /   WARD ${snapshot.ward}`,43,171,993,24,BLUE,'Roboto');
+ const detail=permit?(ward?`${snapshot.permits} ISSUED PERMITS  /  ${snapshot.sites} SITES  /  ${rank}`:`ADU BUILDING PERMIT ISSUED   /   WARD ${snapshot.ward}`):(ward?`${snapshot.adus} ADUs  /  ${snapshot.applications} APPLICATIONS  /  ${rank}`:`${snapshot.focus.quantity} ADU${snapshot.focus.quantity===1?'':'s'} REQUESTED   /   WARD ${snapshot.ward}`);
+ fitted(ctx,detail,43,171,993,24,BLUE,'Roboto');
  ctx.drawImage(map.getCanvas(),0,194,1080,height);
  if(ward){
   for(const {f,p,x,y} of positions(map)){
@@ -82,7 +84,7 @@ async function render(id){
   ctx.strokeStyle='#b1c4ce';ctx.lineWidth=1;ctx.strokeRect(20,214,1040,height-40);
  }else{const p=map.project(center);pin(ctx,p.x,p.y+194);}
  const date=new Date(`${snapshot.as_of}T12:00:00Z`).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'UTC'});
- if(ward)label(ctx,`Applications submitted since April 1, 2026 · As of ${date}`,42,1027,19,'#cad1d5');
+ if(ward)label(ctx,permit?`Linked permits at preapproved sites · As of ${date} · ${snapshot.mapped_sites}/${snapshot.sites} sites mapped`:`Applications submitted since April 1, 2026 · As of ${date}`,42,1027,19,'#cad1d5');
  ctx.textAlign='right';label(ctx,'Data: City of Chicago Data Portal · © OpenMapTiles · © OpenStreetMap contributors',1038,1061,12,'#c1c9cc');ctx.textAlign='start';ctx.fillStyle=BLUE;ctx.fillRect(0,1072,1080,8);
  let quality=.94,blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
  while(blob.size>1_950_000&&quality>.5){quality-=.04;blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));}
@@ -92,6 +94,6 @@ async function render(id){
  map.remove();
 }
 await render('n5');await render('wc');
-const response=await fetch('/export/verification.json',{method:'POST',body:JSON.stringify({source_run:snapshot.source_run,ward:snapshot.ward,focus:snapshot.focus.id,renders:results})});
+const response=await fetch('/export/verification.json',{method:'POST',body:JSON.stringify({mode:snapshot.mode??'scorecard',source_run:snapshot.source_run,ward:snapshot.ward,focus:snapshot.focus.id,renders:results})});
 if(!response.ok)throw Error('Verification export failed');
 document.querySelector('#status').textContent='Scorecard maps complete';

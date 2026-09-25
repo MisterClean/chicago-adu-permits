@@ -47,6 +47,8 @@ On a host too small to run Chrome, use a consistent **copy** of its post-migrati
 
 ## Review and recovery
 
+Building-permit match reviews and map-reply recovery use the same durable state directory. See [permit announcements](permit-announcements.md) for the separate permit baseline, review commands, and two-image reply. After schema-3 migration, run `ingest-permits` with publishing disabled before treating `check --health` as green. The main worker prepares permit maps with Chrome, so check its memory capacity before enabling permit publishing.
+
 ```sh
 adu-bot --config /etc/adu-bot/config.toml queue list
 adu-bot --config /etc/adu-bot/config.toml queue inspect 'chicago:j4h8-ug9m:123:preapproval-first-observed:v1'

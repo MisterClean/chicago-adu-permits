@@ -1,6 +1,6 @@
 use adu_bot::{
     config::Config,
-    media,
+    media, permits,
     publish::{self, bluesky::Bluesky, scorecards},
     queue, render,
     source::{self, Socrata},
@@ -35,6 +35,8 @@ enum Command {
     /// Upgrade an existing database; caller must exclude normal runs with deployment.lock.
     Migrate,
     Ingest,
+    /// Fetch issued building permits and match them to preapproved applications.
+    IngestPermits,
     Publish {
         #[arg(long)]
         dry_run: bool,
@@ -54,6 +56,19 @@ enum Command {
         /// Write a full-resolution JPEG and sibling .alt.txt. Fetches Street View; does not post.
         #[arg(long)]
         image: Option<PathBuf>,
+    },
+    PreviewPermit {
+        #[arg(long)]
+        application_id: String,
+        #[arg(long)]
+        permit_number: String,
+        /// Write the permit card and neighborhood/ward maps without posting.
+        #[arg(long)]
+        image: Option<PathBuf>,
+    },
+    PermitMatches {
+        #[command(subcommand)]
+        action: PermitMatchCommand,
     },
     Queue {
         #[command(subcommand)]
@@ -85,6 +100,22 @@ enum QueueCommand {
     },
     Retry {
         event_key: String,
+        #[arg(long)]
+        reason: String,
+    },
+}
+#[derive(Subcommand)]
+enum PermitMatchCommand {
+    List,
+    Confirm {
+        application_id: String,
+        permit_number: String,
+        #[arg(long)]
+        reason: String,
+    },
+    Reject {
+        application_id: String,
+        permit_number: String,
         #[arg(long)]
         reason: String,
     },
@@ -187,6 +218,7 @@ fn run() -> Result<()> {
                 Command::Run
                     | Command::Publish { dry_run: false }
                     | Command::Ingest
+                    | Command::IngestPermits
                     | Command::Scorecards {
                         action: ScorecardCommand::Run
                     }
@@ -200,6 +232,11 @@ fn run() -> Result<()> {
     match cli.command {
         Command::SchemaVersion | Command::Check { .. } | Command::Migrate => unreachable!(),
         Command::Ingest => source::ingest(&mut store, &mut Socrata::new(&config), &config)?,
+        Command::IngestPermits => permits::ingest(
+            &mut store,
+            &mut permits::SocrataPermits::new(&config),
+            &config,
+        )?,
         Command::Run => {
             let started = std::time::Instant::now();
             let ingestion = if store.due_ingest(config.ingest_interval_seconds)? {
@@ -207,6 +244,14 @@ fn run() -> Result<()> {
             } else {
                 Ok(())
             };
+            ingestion?;
+            if permits::due_ingest(&store, config.ingest_interval_seconds)? {
+                permits::ingest(
+                    &mut store,
+                    &mut permits::SocrataPermits::new(&config),
+                    &config,
+                )?;
+            }
             let mut remaining = config.clone();
             remaining.max_run_seconds = config
                 .max_run_seconds
@@ -216,7 +261,6 @@ fn run() -> Result<()> {
             } else {
                 Ok(())
             };
-            ingestion?;
             publishing?;
         }
         Command::Scorecards { action } => match action {
@@ -256,7 +300,8 @@ fn run() -> Result<()> {
             publish::publish(&mut store, &config, &mut Bluesky::new(&config)?)?
         }
         Command::Status { json } => {
-            let status = store.status()?;
+            let mut status = store.status()?;
+            status["permits"] = permits::status(&store)?;
             if json {
                 println!("{}", serde_json::to_string(&status)?);
             } else {
@@ -286,6 +331,72 @@ fn run() -> Result<()> {
                 );
             }
         }
+        Command::PreviewPermit {
+            application_id,
+            permit_number,
+            image,
+        } => {
+            let key = permits::event_key(&application_id, &permit_number);
+            let (app, permit): (String,String) = store.db.query_row("SELECT application_observation,observation FROM permit_event_evidence WHERE event_key=?1",[key],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            let app = serde_json::from_str(&app)?;
+            let permit = serde_json::from_str(&permit)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&render::permit_record(
+                    &app,
+                    &permit,
+                    chrono::Utc::now()
+                )?)?
+            );
+            if let Some(path) = image {
+                let card = media::render_permit(&config, &app, &permit)?;
+                std::fs::write(&path, &card.bytes)?;
+                std::fs::write(path.with_extension("alt.txt"), &card.alt)?;
+                let snapshot = permits::ward_snapshot(&store, &app.id, &permit.number)?;
+                let (near, ward_map, mapped_sites) =
+                    adu_bot::maps::render_pair(&config, &snapshot)?;
+                let mut mapped_snapshot = snapshot.clone();
+                mapped_snapshot.mapped_sites = mapped_sites;
+                std::fs::write(
+                    path.with_extension("ward-snapshot.json"),
+                    serde_json::to_vec_pretty(&mapped_snapshot)?,
+                )?;
+                std::fs::write(path.with_extension("near.jpg"), &near.bytes)?;
+                std::fs::write(path.with_extension("ward.jpg"), &ward_map.bytes)?;
+                std::fs::write(path.with_extension("near.alt.txt"), &near.alt)?;
+                std::fs::write(path.with_extension("ward.alt.txt"), &ward_map.alt)?;
+            }
+        }
+        Command::PermitMatches { action } => match action {
+            PermitMatchCommand::List => println!(
+                "{}",
+                serde_json::to_string_pretty(&permits::matches(&store)?)?
+            ),
+            PermitMatchCommand::Confirm {
+                application_id,
+                permit_number,
+                reason,
+            } => permits::review_match(
+                &mut store,
+                &application_id,
+                &permit_number,
+                "confirm",
+                &reason,
+                config.bluesky.did.as_deref(),
+            )?,
+            PermitMatchCommand::Reject {
+                application_id,
+                permit_number,
+                reason,
+            } => permits::review_match(
+                &mut store,
+                &application_id,
+                &permit_number,
+                "reject",
+                &reason,
+                config.bluesky.did.as_deref(),
+            )?,
+        },
         Command::Backup { destination } => store.backup(&destination)?,
         Command::Queue { action } => match action {
             QueueCommand::List => {
@@ -350,20 +461,29 @@ fn check(config: &Config, health: bool) -> Result<()> {
         |r| r.get(0),
     )?;
     let attention: i64 = db.query_row(
-        "SELECT (SELECT count(*) FROM deliveries WHERE state IN ('held','failed'))+(SELECT count(*) FROM reply_deliveries WHERE state IN ('held','failed'))",
+        "SELECT (SELECT count(*) FROM deliveries WHERE state IN ('held','failed')) + (SELECT count(*) FROM permit_replies WHERE state IN ('held','failed')) + (SELECT count(*) FROM reply_deliveries WHERE state IN ('held','failed'))",
+        [],
+        |r| r.get(0),
+    )?;
+    let permit_last: Option<i64> = db.query_row(
+        "SELECT max(ended_at) FROM permit_runs WHERE status='success'",
         [],
         |r| r.get(0),
     )?;
     let oldest_reply:Option<i64>=db.query_row("SELECT min(enqueued_at) FROM reply_deliveries WHERE state IN ('pending','prepared','sending','retry')",[],|r|r.get(0))?;
-    let paused: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM adapter_state WHERE paused=1)", [], |r| r.get(0))?;
+    let paused: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM source_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM permit_state WHERE posting_paused=1) OR EXISTS(SELECT 1 FROM adapter_state WHERE paused=1)", [], |r| r.get(0))?;
     println!(
         "{}",
-        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"attention_deliveries":attention,"oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(adu_bot::store::now()-at).max(0)),"paused":paused})
+        serde_json::json!({"schema":version,"integrity":integrity,"baseline_established":baseline,"last_success":last,"permit_last_success":permit_last,"attention_deliveries":attention,"oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(adu_bot::store::now()-at).max(0)),"paused":paused})
     );
     if health {
         ensure!(
             last.is_some_and(|at| adu_bot::store::now() - at <= config.stale_after_seconds),
             "source ingestion is stale"
+        );
+        ensure!(
+            permit_last.is_some_and(|at| adu_bot::store::now() - at <= config.stale_after_seconds),
+            "permit ingestion is stale"
         );
         ensure!(
             !paused && config.publish_enabled,

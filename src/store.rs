@@ -59,7 +59,9 @@ impl Store {
             "database requires explicit migration"
         );
         db.execute("UPDATE ingest_runs SET status='failed', ended_at=?1, failure='interrupted before promotion' WHERE status='fetching'", [now()])?;
+        db.execute("UPDATE permit_runs SET status='failed', ended_at=?1, failure='interrupted before promotion' WHERE status='fetching'", [now()])?;
         db.execute("DELETE FROM staged_applications WHERE run_id IN (SELECT id FROM ingest_runs WHERE status='failed' AND started_at < ?1)", [now()-7*86400])?;
+        db.execute("DELETE FROM staged_permits WHERE run_id IN (SELECT id FROM permit_runs WHERE status='failed' AND started_at < ?1)", [now()-7*86400])?;
         Ok(Self { db, _lock: lock })
     }
     pub fn begin_run(&self) -> Result<i64> {
@@ -241,6 +243,7 @@ impl Store {
         let backup = Connection::open(destination)?;
         // A restored backup must never silently resume public writes.
         backup.execute("UPDATE source_state SET posting_paused=1", [])?;
+        backup.execute("UPDATE permit_state SET posting_paused=1", [])?;
         let result: String = backup.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
         ensure!(result == "ok", "backup integrity check failed");
         Ok(())
@@ -264,7 +267,7 @@ impl Store {
         };
         let revision: Option<String> = self.db.query_row("SELECT revision_after FROM ingest_runs WHERE status='success' ORDER BY id DESC LIMIT 1",[],|r|r.get(0)).optional()?.flatten();
         let oldest: Option<i64> = self.db.query_row(
-            "SELECT min(e.observed_at) FROM events e WHERE e.disposition='pending' AND (NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key) OR EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key AND d.state NOT IN ('sent','suppressed')))", [], |r| r.get(0))?;
+            "SELECT min(e.observed_at) FROM events e WHERE e.disposition='pending' AND (NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key) OR EXISTS(SELECT 1 FROM deliveries d WHERE d.event_key=e.event_key AND d.state NOT IN ('sent','suppressed')) OR EXISTS(SELECT 1 FROM permit_replies p WHERE p.event_key=e.event_key AND p.state NOT IN ('sent','suppressed')))", [], |r| r.get(0))?;
         let oldest_reply:Option<i64>=self.db.query_row("SELECT min(enqueued_at) FROM reply_deliveries WHERE state IN ('pending','prepared','sending','retry')",[],|r|r.get(0))?;
         let last_attempt_status: Option<String> = self
             .db
@@ -289,11 +292,11 @@ impl Store {
                 "source_revision":revision,"present":scalar("SELECT count(*) FROM applications WHERE present=1")?,"missing":scalar("SELECT count(*) FROM applications WHERE present=0")?,
                 "changed_last_run":scalar("SELECT (SELECT changed_rows FROM ingest_runs WHERE status='success' ORDER BY id DESC LIMIT 1)")?,
                 "unknown_statuses":scalar("SELECT count(*) FROM applications WHERE present=1 AND json_extract(observation,'$.status')='unknown'")?,
-                "events":groups("events","disposition")?,"deliveries":groups("deliveries","state")?,"scorecard_replies":groups("reply_deliveries","state")?,"issues":groups("issues","kind")?,
+                "events":groups("events","disposition")?,"deliveries":groups("deliveries","state")?,"permit_replies":groups("permit_replies","state")?,"scorecard_replies":groups("reply_deliveries","state")?,"issues":groups("issues","kind")?,
                 "oldest_pending_observed_at":oldest,
                 "oldest_queue_age_seconds":oldest.map(|at|(now()-at).max(0)),
                 "last_attempt_status":last_attempt_status,"last_attempt_failure":last_failure,
-                "last_successful_post":scalar("SELECT max(sent_at) FROM deliveries")?,
+                "last_successful_post":scalar("SELECT max(t) FROM (SELECT sent_at AS t FROM deliveries UNION ALL SELECT sent_at AS t FROM permit_replies)")?,
                 "last_successful_scorecard":scalar("SELECT max(sent_at) FROM reply_deliveries")?,
                 "oldest_scorecard_queue_age_seconds":oldest_reply.map(|at|(now()-at).max(0)),
                 "mapped_locations_current":scalar("SELECT count(*) FROM map_locations WHERE observed_run=(SELECT last_successful_run FROM source_state LIMIT 1) AND latitude IS NOT NULL")?,

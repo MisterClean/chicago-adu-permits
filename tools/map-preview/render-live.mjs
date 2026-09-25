@@ -10,7 +10,8 @@ const [input,output]=process.argv.slice(2);
 if(!input||!output)throw Error('Usage: node render-live.mjs SNAPSHOT.json OUTPUT_DIR');
 const payload=await fs.readFile(input);
 const snapshot=JSON.parse(payload);
-if(!Number.isInteger(snapshot.ward)||snapshot.ward<1||snapshot.ward>50||!snapshot.boundary)throw Error('Invalid scorecard snapshot');
+if(!Number.isInteger(snapshot.ward)||snapshot.ward<1||snapshot.ward>50||!snapshot.boundary)throw Error('Invalid map snapshot');
+if(snapshot.mode==='permit'&&(!snapshot.permit_number||!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.as_of)||!Array.isArray(snapshot.points)||snapshot.points.length<1||!snapshot.points.some(point=>point.id===snapshot.focus?.id)||!Number.isInteger(snapshot.permits)||snapshot.permits<1||!Number.isInteger(snapshot.sites)||snapshot.sites<1))throw Error('Invalid permit map snapshot');
 await fs.mkdir(output,{recursive:true,mode:0o700});
 const browserPath=process.env.CHROME_BIN||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':'/usr/bin/google-chrome');
 async function asset(...choices){for(const candidate of choices){if(await fs.stat(candidate).catch(()=>false))return candidate;}throw Error(`Missing renderer asset: ${choices[0]}`);}
@@ -53,7 +54,7 @@ let timer;
 try{
  await Promise.race([done,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(`Chrome render timed out: ${stderr}`)),120000);}),new Promise((_,reject)=>child.on('error',reject)),new Promise((_,reject)=>child.on('exit',(code,signal)=>reject(Error(`Chrome exited before rendering (${code??signal}): ${stderr}`))))]);
  const verification=JSON.parse(await fs.readFile(path.join(output,'verification.json')));
- if(verification.renders?.length!==2||verification.source_run!==snapshot.source_run||verification.focus!==snapshot.focus.id)throw Error('Render verification mismatch');
+ if(verification.renders?.length!==2||verification.source_run!==snapshot.source_run||verification.focus!==snapshot.focus.id||verification.mode!==(snapshot.mode??'scorecard'))throw Error('Render verification mismatch');
  process.stdout.write(JSON.stringify(verification)+'\n');
 }finally{
  clearTimeout(timer);

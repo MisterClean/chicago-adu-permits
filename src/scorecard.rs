@@ -274,7 +274,7 @@ fn snapshot_with_boundary(
     })
 }
 
-fn fetch_boundary(config: &Config, ward: i64) -> Result<Value> {
+pub(crate) fn fetch_boundary(config: &Config, ward: i64) -> Result<Value> {
     let mut url = url::Url::parse(
         "https://gis.cookcountyil.gov/hosting/rest/services/cookviewer_political_boundaries/MapServer/28/query",
     )?;
@@ -317,7 +317,7 @@ fn fetch_boundary(config: &Config, ward: i64) -> Result<Value> {
     Ok(boundary)
 }
 
-fn inside_ward(boundary: &Value, point: Location) -> bool {
+pub(crate) fn inside_ward(boundary: &Value, point: Location) -> bool {
     let geometry = &boundary["features"][0]["geometry"];
     let Some(coordinates) = geometry["coordinates"].as_array() else {
         return false;

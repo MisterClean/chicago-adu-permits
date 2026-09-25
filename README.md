@@ -1,8 +1,8 @@
-# Chicago ADU preapproval bot
+# Chicago ADU preapproval and building-permit bot
 
-A small Rust command-line service that watches Chicago's [Additional Dwelling Unit Preapproval Applications](https://data.cityofchicago.org/Buildings/Additional-Dwelling-Unit-Preapproval-Applications/j4h8-ug9m/about_data) and queues one Bluesky announcement per newly qualifying application. An optional, separately scheduled worker replies to each sent announcement with a two-image ward scorecard.
+A small Rust command-line service that watches Chicago's [Additional Dwelling Unit Preapproval Applications](https://data.cityofchicago.org/Buildings/Additional-Dwelling-Unit-Preapproval-Applications/j4h8-ug9m/about_data) and [Building Permits](https://data.cityofchicago.org/Buildings/Building-Permits/ydr8-5enu/about_data). It announces newly qualifying preapprovals and newly issued building permits linked to them, with separately queued map replies.
 
-**This feed reports Department of Housing preapprovals, not building permits.** Every announcement says that a building permit is still required. One application may request multiple ADUs. The bot reports requested units, never completed homes.
+Preapproval and permit issuance are separate events. A preapproval card says a building permit is still required. A permit card says the City issued a permit; it does not say construction is complete. One preapproval application may request multiple ADUs and receive more than one building permit.
 
 ## Start with publishing disabled
 
@@ -12,13 +12,16 @@ Requires Rust 1.88 or later and a C compiler for bundled SQLite. CI tests stable
 cargo build --release --locked
 cp config.example.toml config.toml
 ./target/release/adu-bot --config config.toml ingest
+./target/release/adu-bot --config config.toml ingest-permits
 ./target/release/adu-bot --config config.toml status --json
 ./target/release/adu-bot --config config.toml preview --application-id 955045
 ./target/release/adu-bot --config config.toml preview --application-id 955045 --image state/preview.jpg
 ./target/release/adu-bot --config config.toml publish --dry-run
 ```
 
-The first complete scan establishes the baseline and suppresses existing preapprovals. An empty dry run immediately afterward is expected. Preview renders a selected application's current facts without queueing or posting it. Neither preview nor dry run requires Bluesky credentials. Previewing a nonapproved application is for template inspection only; the queue enforces eligibility.
+The first complete scan of each source establishes its own baseline and suppresses historical announcements. An empty dry run immediately afterward is expected. Preview renders selected facts without queueing or posting them. Neither preview nor dry run requires Bluesky credentials. Previewing a nonapproved application is for template inspection only; the queue enforces eligibility.
+
+See [permit announcements](docs/permit-announcements.md) for matching rules, review commands, map replies, and the rollout sequence.
 
 Use a dedicated Bluesky account and a revocable **app password**. Configure the account DID and optionally its handle in `[bluesky]`. Supply the password through `BLUESKY_APP_PASSWORD` or a protected file, and optionally set `SOCRATA_APP_TOKEN`. The CLI does not automatically load `.env` files. The PDS advertised in authenticated session identity is used for record operations. Sessions are persisted privately with rotated access and refresh tokens. Run `adu-bot --config config.toml adapter check` to verify credentials without posting.
 
@@ -57,6 +60,8 @@ The first image shows the application location in an oblique neighborhood map. T
 
 Rendering requires Node 20+, Chrome with software WebGL, outbound access to the map tiles and Cook County boundary, and materially more memory than the native announcement worker. Set `[scorecards].renderer_dir` to the release's `map-renderer` directory on a deployed host, and `[scorecards].chrome_bin` if Chrome is not at `/usr/bin/google-chrome`. Run a source-backed local preview before enabling the separate schedule. See [operations](docs/operations.md#scorecard-activation-and-recovery) and [deployment](docs/deployment.md#scorecard-worker).
 
+Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design. The ward view shows all mapped, uniquely linked issued-permit sites in that ward, with marker numbers counting permits at each preapproved site and a red ring around the current site. The main publishing worker currently prepares those permit maps and therefore also needs the renderer, Chrome, and enough memory for a map render.
+
 ## Profile artwork
 
 The [profile avatar](assets/profile/README.md) pairs a red Chicago star with a blue
@@ -74,11 +79,16 @@ cargo run --locked --example generate_avatar
 | Command | Purpose |
 | --- | --- |
 | `ingest` | Fetch and validate a complete source snapshot, then atomically promote it |
+| `ingest-permits` | Fetch and validate issued permit candidates, then match them to current preapprovals |
 | `run` | Ingest when due, then handle due deliveries if publishing is enabled |
 | `publish --dry-run` | Render pending event evidence; no authentication, sends, or receipt changes |
 | `publish` | Attempt due deliveries, subject to configuration and safety gates |
 | `status --json` | Source freshness, baseline, changes, issues, event and delivery counts |
 | `preview --application-id ID [--image PATH.jpg]` | Render current application facts and optionally a Street View card without queueing |
+| `preview-permit --application-id ID --permit-number NUMBER [--image PATH.jpg]` | Render permit text and optionally its card plus two map images without posting |
+| `permit-matches list` | Inspect confirmed and review-needed permit links |
+| `permit-matches confirm ID NUMBER --reason TEXT` | Approve a proposed link for the normal delivery path |
+| `permit-matches reject ID NUMBER --reason TEXT` | Reject a proposed link with an append-only review receipt |
 | `scorecards preview ID --output-dir DIR` | Render both source-backed maps, alt text, post text, and frozen evidence locally without posting |
 | `scorecards run` | Prepare or reconcile and send one due scorecard reply when enabled |
 | `scorecards run-prepared REPLY_ID --input-dir DIR` | Send one queued reply from reviewed preview files, using the production outbox without running Chrome there |
