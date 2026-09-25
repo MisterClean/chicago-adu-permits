@@ -476,13 +476,18 @@ impl Publisher for Bluesky {
         near: &PostImage,
         ward: &PostImage,
     ) -> Result<Value> {
+        ensure!(
+            !near.bytes.is_empty()
+                && near.bytes.len() <= media::MAX_IMAGE_BYTES
+                && !ward.bytes.is_empty()
+                && ward.bytes.len() <= media::MAX_IMAGE_BYTES,
+            "invalid permit map image size"
+        );
         let mut record =
             render::permit_reply_record(snapshot, root_uri, root_cid, chrono::Utc::now())?;
-        let mut first = record.clone();
-        self.attach_image(&mut first, near)?;
-        let mut second = record.clone();
-        self.attach_image(&mut second, ward)?;
-        record["embed"] = json!({"$type":"app.bsky.embed.images","images":[first["embed"]["images"][0].clone(),second["embed"]["images"][0].clone()]});
+        let first = near.embed(self.upload_blob(&near.bytes)?);
+        let second = ward.embed(self.upload_blob(&ward.bytes)?);
+        record["embed"] = json!({"$type":"app.bsky.embed.images","images":[first["images"][0].clone(),second["images"][0].clone()]});
         render::validate(&record)?;
         Ok(record)
     }
