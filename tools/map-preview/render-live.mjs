@@ -11,7 +11,7 @@ if(!input||!output)throw Error('Usage: node render-live.mjs SNAPSHOT.json OUTPUT
 const payload=await fs.readFile(input);
 const snapshot=JSON.parse(payload);
 if(!Number.isInteger(snapshot.ward)||snapshot.ward<1||snapshot.ward>50||!snapshot.boundary)throw Error('Invalid map snapshot');
-if(snapshot.mode==='permit'&&(!snapshot.permit_number||!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.as_of)||snapshot.points?.length!==1))throw Error('Invalid permit map snapshot');
+if(snapshot.mode==='permit'&&(!snapshot.permit_number||!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.as_of)||!Array.isArray(snapshot.points)||snapshot.points.length<1||!snapshot.points.some(point=>point.id===snapshot.focus?.id)||!Number.isInteger(snapshot.permits)||snapshot.permits<1||!Number.isInteger(snapshot.sites)||snapshot.sites<1))throw Error('Invalid permit map snapshot');
 await fs.mkdir(output,{recursive:true,mode:0o700});
 const browserPath=process.env.CHROME_BIN||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':'/usr/bin/google-chrome');
 async function asset(...choices){for(const candidate of choices){if(await fs.stat(candidate).catch(()=>false))return candidate;}throw Error(`Missing renderer asset: ${choices[0]}`);}

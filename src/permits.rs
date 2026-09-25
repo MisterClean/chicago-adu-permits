@@ -1,7 +1,7 @@
 //! Complete, bounded permit scans and conservative links to housing preapprovals.
 use crate::{
     config::{Config, PERMIT_DATASET},
-    normalize::{Observation, source_date},
+    normalize::{Location, Observation, source_date},
     store::{Store, chicago_date, now},
 };
 use anyhow::{Context, Result, ensure};
@@ -9,7 +9,10 @@ use chrono::NaiveDate;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::Instant,
+};
 
 pub const FIELDS: &[(&str, &str)] = &[
     ("id", "text"),
@@ -760,52 +763,175 @@ pub fn review_match(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub struct WardSummary {
-    pub ward: i64,
-    pub adus: i64,
-    pub applications: i64,
-    pub city_adus: i64,
-    pub rank: i64,
-    pub as_of: NaiveDate,
+#[derive(Debug, Clone, Serialize)]
+pub struct PermitMapPoint {
+    pub id: String,
+    pub address: String,
+    /// Number of distinct confirmed issued permits at this preapproval site.
+    pub quantity: i64,
+    pub location: Location,
 }
-pub fn ward_summary(store: &Store, ward: i64) -> Result<WardSummary> {
-    ensure!((1..=50).contains(&ward), "invalid ward");
-    let cohort_start = NaiveDate::from_ymd_opt(2026, 4, 1).context("invalid cohort date")?;
-    let mut quantities = [0_i64; 50];
-    let mut counts = [0_i64; 50];
-    let mut stmt = store
-        .db
-        .prepare("SELECT observation FROM applications WHERE present=1")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PermitWardSnapshot {
+    pub source_run: i64,
+    pub as_of: NaiveDate,
+    pub ward: i64,
+    pub permits: i64,
+    pub sites: i64,
+    pub mapped_sites: i64,
+    pub city_permits: i64,
+    pub rank: i64,
+    pub tied: bool,
+    pub focus: PermitMapPoint,
+    pub points: Vec<PermitMapPoint>,
+    pub permit_number: String,
+}
+
+struct PermitSite {
+    address: String,
+    permits: i64,
+    location: Option<Location>,
+}
+
+fn permit_location(permit: &Permit) -> Option<Location> {
+    let location = Location {
+        latitude: permit.text("latitude")?.parse().ok()?,
+        longitude: permit.text("longitude")?.parse().ok()?,
+    };
+    location.valid().then_some(location)
+}
+
+/// Freeze current, uniquely linked issued permits before preparing a permit reply.
+/// One map marker represents a preapproval site; its number is issued permits,
+/// not the requested or authorized ADU count.
+pub fn ward_snapshot(
+    store: &Store,
+    focus_application_id: &str,
+    focus_permit_number: &str,
+) -> Result<PermitWardSnapshot> {
+    let (source_run, ended_at): (i64, i64) = store.db.query_row(
+        "SELECT r.id,r.ended_at FROM permit_state s JOIN permit_runs r ON r.id=s.last_successful_run WHERE s.id=1 AND r.status='success'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let as_of = chicago_date(ended_at)?;
+    let mut stmt = store.db.prepare(
+        "SELECT m.application_id,p.observation,a.observation FROM permit_matches m JOIN permits p ON p.source_id=m.source_id JOIN applications a ON a.dataset_id=?1 AND a.application_id=m.application_id WHERE m.status='confirmed' AND p.present=1 AND a.present=1 ORDER BY p.source_id,m.application_id",
+    )?;
+    let rows = stmt.query_map([crate::config::DATASET], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut candidates = Vec::new();
+    let mut matches_per_permit = HashMap::<String, usize>::new();
     for row in rows {
-        let app: Observation = serde_json::from_str(&row?)?;
-        if !app.status.qualifying()
-            || source_date(&app.canonical["submission_date"]).is_none_or(|d| d < cohort_start)
+        let (application_id, permit_json, application_json) = row?;
+        let permit: Permit = serde_json::from_str(&permit_json)?;
+        let application: Observation = serde_json::from_str(&application_json)?;
+        if application.id != application_id
+            || !application.status.qualifying()
+            || !building_permit(&permit)
+            || permit.date("issue_date").is_none_or(|date| date > as_of)
         {
             continue;
         }
-        if let (Some(w), Some(n)) = (app.number("ward"), app.number("adu_applying_for"))
-            && (1..=50).contains(&w)
-            && n > 0
-        {
-            quantities[(w - 1) as usize] += n;
-            counts[(w - 1) as usize] += 1;
+        let ward = permit
+            .text("ward")
+            .and_then(|value| value.parse::<i64>().ok())
+            .or_else(|| application.number("ward"))
+            .filter(|ward| (1..=50).contains(ward));
+        let Some(ward) = ward else { continue };
+        *matches_per_permit
+            .entry(permit.source_id.clone())
+            .or_default() += 1;
+        candidates.push((ward, application_id, application, permit));
+    }
+    let mut sites = BTreeMap::<(i64, String), PermitSite>::new();
+    let mut ward_permits = [0_i64; 50];
+    let mut focus_ward = None;
+    let mut focus_location = None;
+    for (ward, application_id, application, permit) in candidates {
+        // A permit confirmed against more than one application has no unique site.
+        if matches_per_permit[&permit.source_id] != 1 {
+            continue;
+        }
+        ward_permits[(ward - 1) as usize] += 1;
+        let location = permit_location(&permit);
+        let site = sites
+            .entry((ward, application_id.clone()))
+            .or_insert_with(|| PermitSite {
+                address: application
+                    .text("address")
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| permit.address()),
+                permits: 0,
+                location: None,
+            });
+        site.permits += 1;
+        if site.location.is_none() {
+            site.location = location;
+        }
+        if application_id == focus_application_id && permit.number == focus_permit_number {
+            focus_ward = Some(ward);
+            focus_location = location;
+            site.location = location;
         }
     }
-    let n = quantities[(ward - 1) as usize];
-    let rank = 1 + quantities.iter().filter(|&&other| other > n).count() as i64;
-    let as_of: Option<i64> = store.db.query_row(
-        "SELECT max(ended_at) FROM ingest_runs WHERE status='success'",
-        [],
-        |r| r.get(0),
-    )?;
-    Ok(WardSummary {
+    let ward = focus_ward.context("focus permit has no unique current preapproval match")?;
+    let focus_location = focus_location.context("focus permit has no valid map coordinates")?;
+    let permits = ward_permits[(ward - 1) as usize];
+    let rank = 1 + ward_permits
+        .iter()
+        .filter(|&&count| count > permits)
+        .count() as i64;
+    let tied = ward_permits
+        .iter()
+        .filter(|&&count| count == permits)
+        .count()
+        > 1;
+    let city_permits = ward_permits.iter().sum();
+    let site_count = sites
+        .keys()
+        .filter(|(site_ward, _)| *site_ward == ward)
+        .count() as i64;
+    let points: Vec<PermitMapPoint> = sites
+        .into_iter()
+        .filter(|((site_ward, _), _)| *site_ward == ward)
+        .filter_map(|((_, id), site)| {
+            site.location.map(|location| PermitMapPoint {
+                id,
+                address: site.address,
+                quantity: site.permits,
+                location,
+            })
+        })
+        .collect();
+    let focus = points
+        .iter()
+        .find(|point| point.id == focus_application_id)
+        .cloned()
+        .context("focus permit site has no map point")?;
+    ensure!(
+        focus.location == focus_location,
+        "focus permit point changed"
+    );
+    let mapped_sites = points.len() as i64;
+    Ok(PermitWardSnapshot {
+        source_run,
+        as_of,
         ward,
-        adus: n,
-        applications: counts[(ward - 1) as usize],
-        city_adus: quantities.iter().sum(),
+        permits,
+        sites: site_count,
+        mapped_sites,
+        city_permits,
         rank,
-        as_of: chicago_date(as_of.context("preapproval scan missing")?)?,
+        tied,
+        focus,
+        points,
+        permit_number: focus_permit_number.to_owned(),
     })
 }

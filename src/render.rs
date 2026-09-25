@@ -1,7 +1,7 @@
 use crate::{
     config::DATASET,
     normalize::{Observation, Status, select, source_date},
-    permits::{Permit, WardSummary},
+    permits::{Permit, PermitWardSnapshot},
 };
 use anyhow::{Result, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -179,7 +179,7 @@ pub fn permit_record(
 }
 
 pub fn permit_reply_record(
-    summary: &WardSummary,
+    summary: &PermitWardSnapshot,
     root_uri: &str,
     root_cid: &str,
     created_at: DateTime<Utc>,
@@ -188,21 +188,20 @@ pub fn permit_reply_record(
         root_uri.starts_with("at://") && !root_cid.is_empty(),
         "invalid root reference"
     );
-    let share = if summary.city_adus > 0 {
-        format!(
-            "{:.1}%",
-            100. * summary.adus as f64 / summary.city_adus as f64
-        )
+    let share = 100. * summary.permits as f64 / summary.city_permits as f64;
+    let rank = if summary.tied {
+        format!("Tied #{}", summary.rank)
     } else {
-        "unknown share".into()
+        format!("#{}", summary.rank)
     };
     let text = format!(
-        "Around the permit + Ward {}\n\n{} requested ADUs across {} preapproved applications. Tied #{} of 50 wards by requested ADUs ({} citywide).\n\nApplications since Apr 1, 2026. As of {}. Permit point is approximate.",
+        "Around the permit + Ward {}\n\n{} issued ADU building permits linked to {} preapproved sites. {} of 50 wards by linked permits ({share:.1}% citywide).\n\n{}/{} sites mapped. As of {}. Dots count permits; locations are approximate.",
         summary.ward,
-        summary.adus,
-        summary.applications,
-        summary.rank,
-        share,
+        summary.permits,
+        summary.sites,
+        rank,
+        summary.mapped_sites,
+        summary.sites,
         summary.as_of.format("%b %-d")
     );
     let parent = json!({"uri":root_uri,"cid":root_cid});

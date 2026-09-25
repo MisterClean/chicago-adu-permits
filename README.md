@@ -60,7 +60,7 @@ The first image shows the application location in an oblique neighborhood map. T
 
 Rendering requires Node 20+, Chrome with software WebGL, outbound access to the map tiles and Cook County boundary, and materially more memory than the native announcement worker. Set `[scorecards].renderer_dir` to the release's `map-renderer` directory on a deployed host, and `[scorecards].chrome_bin` if Chrome is not at `/usr/bin/google-chrome`. Run a source-backed local preview before enabling the separate schedule. See [operations](docs/operations.md#scorecard-activation-and-recovery) and [deployment](docs/deployment.md#scorecard-worker).
 
-Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design, centered on the permit location. The main publishing worker currently prepares those permit maps and therefore also needs the renderer, Chrome, and enough memory for a map render.
+Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design. The ward view shows all mapped, uniquely linked issued-permit sites in that ward, with marker numbers counting permits at each preapproved site and a red ring around the current site. The main publishing worker currently prepares those permit maps and therefore also needs the renderer, Chrome, and enough memory for a map render.
 
 ## Profile artwork
 

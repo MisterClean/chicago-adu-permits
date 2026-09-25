@@ -2,9 +2,8 @@
 use crate::{
     config::Config,
     media::{MAX_IMAGE_BYTES, PostImage},
-    normalize::{Location, Observation},
-    permits::Permit,
-    render, scorecard,
+    permits::PermitWardSnapshot,
+    scorecard,
 };
 use anyhow::{Context, Result, ensure};
 use image::GenericImageView;
@@ -13,61 +12,37 @@ use std::{fs, process::Command};
 
 pub fn render_pair(
     config: &Config,
-    permit: &Permit,
-    application: &Observation,
-) -> Result<(PostImage, PostImage)> {
-    let latitude = permit
-        .text("latitude")
-        .and_then(|value| value.parse::<f64>().ok())
-        .context("permit latitude missing")?;
-    let longitude = permit
-        .text("longitude")
-        .and_then(|value| value.parse::<f64>().ok())
-        .context("permit longitude missing")?;
-    let location = Location {
-        latitude,
-        longitude,
-    };
-    ensure!(location.valid(), "permit coordinates outside Chicago");
-    let ward = application
-        .number("ward")
-        .filter(|ward| (1..=50).contains(ward))
-        .context("preapproval ward required for maps")?;
-    let boundary = scorecard::fetch_boundary(config, ward)?;
+    snapshot: &PermitWardSnapshot,
+) -> Result<(PostImage, PostImage, i64)> {
+    let boundary = scorecard::fetch_boundary(config, snapshot.ward)?;
     ensure!(
-        scorecard::inside_ward(&boundary, location),
+        scorecard::inside_ward(&boundary, snapshot.focus.location),
         "permit location lies outside the preapproval ward"
     );
-    let issued = permit
-        .date("issue_date")
-        .context("permit issue date required for maps")?
-        .to_string();
-    let address = render::address(application);
-    let focus = json!({
-        "id":permit.number,
-        "address":address,
-        "quantity":application.number("adu_applying_for").unwrap_or(0),
-        "location":location
-    });
-    let payload = json!({
-        "mode":"permit",
-        "source_run":0,
-        "as_of":issued,
-        "ward":ward,
-        "focus":focus,
-        "points":[focus],
-        "boundary":boundary,
-        "permit_number":permit.number
-    });
-    render_payload(config, &payload, permit, ward, &address)
+    let points: Vec<_> = snapshot
+        .points
+        .iter()
+        .filter(|point| scorecard::inside_ward(&boundary, point.location))
+        .collect();
+    ensure!(
+        points.iter().any(|point| point.id == snapshot.focus.id),
+        "focus permit site is absent from ward map"
+    );
+    let mapped_sites = points.len() as i64;
+    let mut payload = serde_json::to_value(snapshot)?;
+    payload["mode"] = json!("permit");
+    payload["points"] = json!(points);
+    payload["mapped_sites"] = json!(mapped_sites);
+    payload["boundary"] = boundary;
+    let (near, ward) = render_payload(config, &payload, snapshot, mapped_sites)?;
+    Ok((near, ward, mapped_sites))
 }
 
 fn render_payload(
     config: &Config,
     payload: &Value,
-    permit: &Permit,
-    ward: i64,
-    address: &str,
+    snapshot: &PermitWardSnapshot,
+    mapped_sites: i64,
 ) -> Result<(PostImage, PostImage)> {
     let work = tempfile::tempdir().context("create permit map work directory")?;
     let input = work.path().join("snapshot.json");
@@ -108,14 +83,14 @@ fn render_payload(
         fs::read(work.path().join("n5.jpg"))?,
         format!(
             "Oblique neighborhood map centered on the approximate location of issued ADU building permit {} at {}, Chicago. A red pin marks the location. Streets, transit, and named places provide context; building shapes do not show the proposed ADU. Location: City of Chicago Data Portal. Basemap: OpenMapTiles and OpenStreetMap.",
-            permit.number, address
+            snapshot.permit_number, snapshot.focus.address
         ),
     )?;
     let ward_map = post_image(
         fs::read(work.path().join("wc.jpg"))?,
         format!(
-            "Chicago Ward {ward} outlined, with the approximate location of issued ADU building permit {} at {} marked by a red pin. Boundary: Cook County GIS. Permit location: City of Chicago Data Portal. Basemap: OpenMapTiles and OpenStreetMap.",
-            permit.number, address
+            "Chicago Ward {} outlined with {mapped_sites} of {} preapproved sites that have a uniquely linked issued ADU building permit. Numbered blue dots show the count of confirmed issued permits at each site; a red ring highlights {}. {} linked permits in the ward as of {}. Permits do not establish how many ADUs were authorized or completed. Locations: City of Chicago Data Portal. Boundary: Cook County GIS. Basemap: OpenMapTiles and OpenStreetMap.",
+            snapshot.ward, snapshot.sites, snapshot.focus.address, snapshot.permits, snapshot.as_of
         ),
     )?;
     Ok((near, ward_map))

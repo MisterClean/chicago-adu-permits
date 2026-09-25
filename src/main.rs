@@ -352,7 +352,15 @@ fn run() -> Result<()> {
                 let card = media::render_permit(&config, &app, &permit)?;
                 std::fs::write(&path, &card.bytes)?;
                 std::fs::write(path.with_extension("alt.txt"), &card.alt)?;
-                let (near, ward_map) = adu_bot::maps::render_pair(&config, &permit, &app)?;
+                let snapshot = permits::ward_snapshot(&store, &app.id, &permit.number)?;
+                let (near, ward_map, mapped_sites) =
+                    adu_bot::maps::render_pair(&config, &snapshot)?;
+                let mut mapped_snapshot = snapshot.clone();
+                mapped_snapshot.mapped_sites = mapped_sites;
+                std::fs::write(
+                    path.with_extension("ward-snapshot.json"),
+                    serde_json::to_vec_pretty(&mapped_snapshot)?,
+                )?;
                 std::fs::write(path.with_extension("near.jpg"), &near.bytes)?;
                 std::fs::write(path.with_extension("ward.jpg"), &ward_map.bytes)?;
                 std::fs::write(path.with_extension("near.alt.txt"), &near.alt)?;

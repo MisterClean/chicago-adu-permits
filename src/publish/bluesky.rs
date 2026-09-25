@@ -4,7 +4,7 @@ use crate::{
     maps,
     media::{self, PostImage},
     normalize::Observation,
-    permits::{Permit, WardSummary},
+    permits::{Permit, PermitWardSnapshot},
     render,
     store::now,
 };
@@ -457,15 +457,17 @@ impl Publisher for Bluesky {
     }
     fn prepare_permit_reply(
         &mut self,
-        observation: &Observation,
-        permit: &Permit,
-        summary: &WardSummary,
+        _observation: &Observation,
+        _permit: &Permit,
+        snapshot: &PermitWardSnapshot,
         root_uri: &str,
         root_cid: &str,
     ) -> Result<Value> {
+        let (near, ward, mapped_sites) = maps::render_pair(&self.config, snapshot)?;
+        let mut mapped_snapshot = snapshot.clone();
+        mapped_snapshot.mapped_sites = mapped_sites;
         let mut record =
-            render::permit_reply_record(summary, root_uri, root_cid, chrono::Utc::now())?;
-        let (near, ward) = maps::render_pair(&self.config, permit, observation)?;
+            render::permit_reply_record(&mapped_snapshot, root_uri, root_cid, chrono::Utc::now())?;
         let mut first = record.clone();
         self.attach_image(&mut first, &near)?;
         let mut second = record.clone();

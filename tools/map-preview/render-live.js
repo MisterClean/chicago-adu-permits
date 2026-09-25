@@ -71,10 +71,10 @@ async function render(id){
  label(ctx,ward?(permit?'THE WARD':'THE WARD SO FAR'):(permit?'AROUND THE PERMIT':'AROUND THE PREAPPROVAL'),42,55,21,BLUE);
  fitted(ctx,ward?`WARD ${snapshot.ward}`:snapshot.focus.address,42,133,995,ward?83:65);
  const rank=`${snapshot.tied?'TIED ':''}#${snapshot.rank} OF 50`;
- const detail=permit?(ward?`ADU BUILDING PERMIT #${snapshot.permit_number} ISSUED`:`ADU BUILDING PERMIT ISSUED   /   WARD ${snapshot.ward}`):(ward?`${snapshot.adus} ADUs  /  ${snapshot.applications} APPLICATIONS  /  ${rank}`:`${snapshot.focus.quantity} ADU${snapshot.focus.quantity===1?'':'s'} REQUESTED   /   WARD ${snapshot.ward}`);
+ const detail=permit?(ward?`${snapshot.permits} ISSUED PERMITS  /  ${snapshot.sites} SITES  /  ${rank}`:`ADU BUILDING PERMIT ISSUED   /   WARD ${snapshot.ward}`):(ward?`${snapshot.adus} ADUs  /  ${snapshot.applications} APPLICATIONS  /  ${rank}`:`${snapshot.focus.quantity} ADU${snapshot.focus.quantity===1?'':'s'} REQUESTED   /   WARD ${snapshot.ward}`);
  fitted(ctx,detail,43,171,993,24,BLUE,'Roboto');
  ctx.drawImage(map.getCanvas(),0,194,1080,height);
- if(ward&&!permit){
+ if(ward){
   for(const {f,p,x,y} of positions(map)){
    if(f.id===snapshot.focus.id)continue;
    if(Math.hypot(x-p.x,y-p.y)>4){ctx.strokeStyle='#354f60';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(p.x,p.y+194);ctx.lineTo(x,y+194);ctx.stroke();}
@@ -82,9 +82,9 @@ async function render(id){
   }
   const p=map.project(center);dot(ctx,p.x,p.y+194,snapshot.focus.quantity,true);
   ctx.strokeStyle='#b1c4ce';ctx.lineWidth=1;ctx.strokeRect(20,214,1040,height-40);
- }else{const p=map.project(center);pin(ctx,p.x,p.y+194);if(ward){ctx.strokeStyle='#b1c4ce';ctx.lineWidth=1;ctx.strokeRect(20,214,1040,height-40);}}
+ }else{const p=map.project(center);pin(ctx,p.x,p.y+194);}
  const date=new Date(`${snapshot.as_of}T12:00:00Z`).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'UTC'});
- if(ward)label(ctx,permit?`Building permit issued ${date} · Location is approximate`:`Applications submitted since April 1, 2026 · As of ${date}`,42,1027,19,'#cad1d5');
+ if(ward)label(ctx,permit?`Linked permits at preapproved sites · As of ${date} · ${snapshot.mapped_sites}/${snapshot.sites} sites mapped`:`Applications submitted since April 1, 2026 · As of ${date}`,42,1027,19,'#cad1d5');
  ctx.textAlign='right';label(ctx,'Data: City of Chicago Data Portal · © OpenMapTiles · © OpenStreetMap contributors',1038,1061,12,'#c1c9cc');ctx.textAlign='start';ctx.fillStyle=BLUE;ctx.fillRect(0,1072,1080,8);
  let quality=.94,blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
  while(blob.size>1_950_000&&quality>.5){quality-=.04;blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));}

@@ -4,7 +4,7 @@ pub mod scorecards;
 use crate::{
     config::{Config, DATASET},
     normalize::{Observation, hash},
-    permits::{self, Permit, WardSummary},
+    permits::{self, Permit, PermitWardSnapshot},
     render,
     store::{Store, chicago_date, now},
 };
@@ -61,7 +61,7 @@ pub trait Publisher {
         &mut self,
         _observation: &Observation,
         _permit: &Permit,
-        _summary: &WardSummary,
+        _snapshot: &PermitWardSnapshot,
         _root_uri: &str,
         _root_cid: &str,
     ) -> Result<Value> {
@@ -407,13 +407,11 @@ fn publish_replies(
             let (app_serialized,permit_serialized):(String,String)=store.db.query_row("SELECT application_observation,observation FROM permit_event_evidence WHERE event_key=?1",[&event],|r|Ok((r.get(0)?,r.get(1)?)))?;
             let obs: Observation = serde_json::from_str(&app_serialized)?;
             let permit: Permit = serde_json::from_str(&permit_serialized)?;
-            let ward = obs
-                .number("ward")
-                .context("ward required for permit map reply")?;
-            let summary = permits::ward_summary(store, ward)?;
-            let record = match publisher
-                .prepare_permit_reply(&obs, &permit, &summary, &root_uri, &root_cid)
-            {
+            let prepared = (|| {
+                let snapshot = permits::ward_snapshot(store, &obs.id, &permit.number)?;
+                publisher.prepare_permit_reply(&obs, &permit, &snapshot, &root_uri, &root_cid)
+            })();
+            let record = match prepared {
                 Ok(record) => record,
                 Err(error) => {
                     reply_error(

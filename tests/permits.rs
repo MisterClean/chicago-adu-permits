@@ -76,6 +76,87 @@ fn scan(store: &mut Store, config: &Config, rows: Vec<Value>) -> Result<()> {
     )
 }
 #[test]
+fn ward_snapshot_maps_each_preapproval_site_with_its_confirmed_permit_count() {
+    let (_dir, mut store, config) = setup();
+    let other = |id: &str, number: &str| {
+        Observation::parse(json!({"id":id,"status":"Pre-Certified","address":format!("{number} W AGATITE AVE"),"street_number":number,"street_direction":"W","street_name":"AGATITE AVE","ward":"46","adu_applying_for":"2","coach_house":false,"conversion_unit":true,"submission_date":date(-40),"action_date":date(-10)})).unwrap()
+    };
+    let run = store.begin_run().unwrap();
+    store
+        .stage(
+            run,
+            &[
+                application("914381", "816 W AGATITE AVE"),
+                other("914382", "820"),
+                other("914383", "824"),
+            ],
+        )
+        .unwrap();
+    store
+        .promote_for_account(run, now(), config.bluesky.did.as_deref())
+        .unwrap();
+    let at = |id: &str, number: &str, app_id: &str, street: &str, longitude: Option<&str>| {
+        let mut row = permit(id, number, &format!("ADU ID {app_id} CONVERSION UNIT"));
+        row["street_number"] = json!(street);
+        row["longitude"] = json!(longitude);
+        row
+    };
+    let first = at("1", "101083804", "914381", "816", Some("-87.6506"));
+    let second = at("2", "101083805", "914382", "820", Some("-87.6507"));
+    let unmapped = at("3", "101083806", "914383", "824", None);
+    scan(
+        &mut store,
+        &config,
+        vec![first.clone(), second.clone(), unmapped.clone()],
+    )
+    .unwrap();
+    let fourth = at("4", "101083807", "914381", "816", Some("-87.6506"));
+    let mut proposed = at("5", "101083808", "914382", "820", Some("-87.6507"));
+    proposed["work_description"] = json!("ONE NEW DWELLING UNIT");
+    scan(
+        &mut store,
+        &config,
+        vec![first, second, unmapped, fourth, proposed],
+    )
+    .unwrap();
+    let snapshot = permits::ward_snapshot(&store, "914381", "101083807").unwrap();
+    assert_eq!(
+        (snapshot.ward, snapshot.permits, snapshot.sites),
+        (46, 4, 3)
+    );
+    assert_eq!((snapshot.city_permits, snapshot.mapped_sites), (4, 2));
+    assert_eq!(snapshot.focus.quantity, 2);
+    assert_eq!(snapshot.points.len(), 2);
+    assert_eq!(snapshot.rank, 1);
+    assert!(!snapshot.tied);
+    let reply = render::permit_reply_record(
+        &snapshot,
+        "at://did:plc:test/app.bsky.feed.post/root",
+        "cid",
+        Utc::now(),
+    )
+    .unwrap();
+    let text = reply["text"].as_str().unwrap();
+    assert!(text.contains("4 issued ADU building permits linked to 3 preapproved sites"));
+    assert!(text.contains("2/3 sites mapped"));
+    store
+        .db
+        .execute(
+            "INSERT INTO permit_matches(application_id,source_id,method,score,status,reason,first_seen,last_seen) VALUES('914381','2','review',100,'confirmed','conflicting test link',1,1)",
+            [],
+        )
+        .unwrap();
+    let unambiguous = permits::ward_snapshot(&store, "914381", "101083807").unwrap();
+    assert_eq!(
+        (
+            unambiguous.permits,
+            unambiguous.sites,
+            unambiguous.mapped_sites
+        ),
+        (3, 2, 1)
+    );
+}
+#[test]
 fn permit_baseline_and_new_pair_are_distinct_and_replay_is_inert() {
     let (_dir, mut store, config) = setup();
     let first = permit("1", "101083804", "ADU ID 914381 ADD TWO DWELLING UNITS");
@@ -225,7 +306,7 @@ impl Publisher for FakePublisher {
         &mut self,
         _: &Observation,
         _: &Permit,
-        summary: &permits::WardSummary,
+        summary: &permits::PermitWardSnapshot,
         uri: &str,
         cid: &str,
     ) -> Result<Value> {
