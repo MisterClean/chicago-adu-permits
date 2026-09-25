@@ -66,6 +66,12 @@ enum Command {
         #[arg(long)]
         image: Option<PathBuf>,
     },
+    /// Publish one queued permit map reply from a verified preview on a capable host.
+    PermitReplyPrepared {
+        event_key: String,
+        #[arg(long)]
+        preview: PathBuf,
+    },
     PermitMatches {
         #[command(subcommand)]
         action: PermitMatchCommand,
@@ -219,6 +225,7 @@ fn run() -> Result<()> {
                     | Command::Publish { dry_run: false }
                     | Command::Ingest
                     | Command::IngestPermits
+                    | Command::PermitReplyPrepared { .. }
                     | Command::Scorecards {
                         action: ScorecardCommand::Run
                     }
@@ -298,6 +305,15 @@ fn run() -> Result<()> {
         Command::Publish { dry_run: true } => publish::dry_run(&store)?,
         Command::Publish { dry_run: false } => {
             publish::publish(&mut store, &config, &mut Bluesky::new(&config)?)?
+        }
+        Command::PermitReplyPrepared { event_key, preview } => {
+            publish::publish_prepared_permit_reply(
+                &mut store,
+                &config,
+                &mut Bluesky::new(&config)?,
+                &event_key,
+                &preview,
+            )?
         }
         Command::Status { json } => {
             let mut status = store.status()?;

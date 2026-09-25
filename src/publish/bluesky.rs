@@ -466,12 +466,22 @@ impl Publisher for Bluesky {
         let (near, ward, mapped_sites) = maps::render_pair(&self.config, snapshot)?;
         let mut mapped_snapshot = snapshot.clone();
         mapped_snapshot.mapped_sites = mapped_sites;
+        self.prepare_permit_reply_prepared(&mapped_snapshot, root_uri, root_cid, &near, &ward)
+    }
+    fn prepare_permit_reply_prepared(
+        &mut self,
+        snapshot: &PermitWardSnapshot,
+        root_uri: &str,
+        root_cid: &str,
+        near: &PostImage,
+        ward: &PostImage,
+    ) -> Result<Value> {
         let mut record =
-            render::permit_reply_record(&mapped_snapshot, root_uri, root_cid, chrono::Utc::now())?;
+            render::permit_reply_record(snapshot, root_uri, root_cid, chrono::Utc::now())?;
         let mut first = record.clone();
-        self.attach_image(&mut first, &near)?;
+        self.attach_image(&mut first, near)?;
         let mut second = record.clone();
-        self.attach_image(&mut second, &ward)?;
+        self.attach_image(&mut second, ward)?;
         record["embed"] = json!({"$type":"app.bsky.embed.images","images":[first["embed"]["images"][0].clone(),second["embed"]["images"][0].clone()]});
         render::validate(&record)?;
         Ok(record)
