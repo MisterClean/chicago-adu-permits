@@ -3,6 +3,8 @@ pub mod scorecards;
 
 use crate::{
     config::{Config, DATASET},
+    maps,
+    media::PostImage,
     normalize::{Observation, hash},
     permits::{self, Permit, PermitWardSnapshot},
     render,
@@ -12,7 +14,7 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
-use std::time::Instant;
+use std::{path::Path, time::Instant};
 
 #[derive(Debug)]
 pub struct Receipt {
@@ -66,6 +68,16 @@ pub trait Publisher {
         _root_cid: &str,
     ) -> Result<Value> {
         anyhow::bail!("permit map reply is unsupported by this publisher")
+    }
+    fn prepare_permit_reply_prepared(
+        &mut self,
+        _snapshot: &PermitWardSnapshot,
+        _root_uri: &str,
+        _root_cid: &str,
+        _near: &PostImage,
+        _ward: &PostImage,
+    ) -> Result<Value> {
+        anyhow::bail!("prepared permit map reply is unsupported by this publisher")
     }
     fn allocate_identity(&self, previous_clock: i64) -> Result<DeliveryIdentity>;
     fn template_version(&self) -> i64;
@@ -360,10 +372,52 @@ pub fn publish(store: &mut Store, config: &Config, publisher: &mut impl Publishe
         publisher,
         config.max_posts_per_run.saturating_sub(processed),
         &mut failed,
+        None,
     )?;
     ensure!(
         !failed,
         "one or more deliveries failed; inspect status and queue"
+    );
+    Ok(())
+}
+
+/// Send one permit reply using maps rendered from the current source snapshot elsewhere.
+pub fn publish_prepared_permit_reply(
+    store: &mut Store,
+    config: &Config,
+    publisher: &mut impl Publisher,
+    event_key: &str,
+    preview: &Path,
+) -> Result<()> {
+    ensure!(config.publish_enabled, "publishing disabled");
+    store.sync_deliveries(config)?;
+    let paused: bool = store.db.query_row(
+        "SELECT paused FROM adapter_state WHERE platform=?1 AND account_id=?2",
+        params![publisher.platform(), publisher.account()],
+        |row| row.get(0),
+    )?;
+    ensure!(!paused, "adapter paused; correct credentials and resume it");
+    let mut failed = false;
+    publish_replies(
+        store,
+        config,
+        publisher,
+        1,
+        &mut failed,
+        Some((event_key, preview)),
+    )?;
+    ensure!(
+        !failed,
+        "prepared permit reply failed; inspect its outbox state"
+    );
+    let state: String = store.db.query_row(
+        "SELECT p.state FROM permit_replies p JOIN deliveries d ON d.event_key=p.event_key AND d.platform=p.platform AND d.account_id=p.account_id WHERE p.event_key=?1 AND p.platform=?2 AND p.account_id=?3 AND d.state='sent'",
+        params![event_key, publisher.platform(), publisher.account()],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        state == "sent",
+        "permit reply remains {state}; retry after send interval"
     );
     Ok(())
 }
@@ -374,6 +428,7 @@ fn publish_replies(
     publisher: &mut impl Publisher,
     remaining: usize,
     failed: &mut bool,
+    prepared: Option<(&str, &Path)>,
 ) -> Result<()> {
     if remaining == 0 {
         return Ok(());
@@ -381,8 +436,8 @@ fn publish_replies(
     store.db.execute("INSERT OR IGNORE INTO permit_replies(event_key,platform,account_id,state) SELECT e.event_key,d.platform,d.account_id,'pending' FROM deliveries d JOIN events e USING(event_key) WHERE e.detection_kind='building_permit' AND e.disposition='pending' AND d.state='sent' AND d.platform=?1 AND d.account_id=?2",params![publisher.platform(),publisher.account()])?;
     for _ in 0..remaining {
         let row:Option<DueReply>=store.db.query_row(
-            "SELECT p.id,p.event_key,p.record_key,p.record_json,p.record_hash,p.attempts,d.remote_uri,d.remote_cid,e.disposition FROM permit_replies p JOIN deliveries d ON d.event_key=p.event_key AND d.platform=p.platform AND d.account_id=p.account_id JOIN events e ON e.event_key=p.event_key WHERE p.platform=?1 AND p.account_id=?2 AND p.state IN ('pending','prepared','sending','retry') AND p.next_attempt<=?3 AND d.state='sent' AND (e.disposition='pending' OR p.attempts>0) ORDER BY CASE WHEN p.attempts>0 THEN 0 ELSE 1 END,p.id LIMIT 1",
-            params![publisher.platform(),publisher.account(),now()],|r|Ok(DueReply{id:r.get(0)?,event:r.get(1)?,key:r.get(2)?,frozen:r.get(3)?,digest:r.get(4)?,attempts:r.get(5)?,root_uri:r.get(6)?,root_cid:r.get(7)?,disposition:r.get(8)?})).optional()?;
+            "SELECT p.id,p.event_key,p.record_key,p.record_json,p.record_hash,p.attempts,d.remote_uri,d.remote_cid,e.disposition FROM permit_replies p JOIN deliveries d ON d.event_key=p.event_key AND d.platform=p.platform AND d.account_id=p.account_id JOIN events e ON e.event_key=p.event_key WHERE p.platform=?1 AND p.account_id=?2 AND p.state IN ('pending','prepared','sending','retry') AND p.next_attempt<=?3 AND d.state='sent' AND (e.disposition='pending' OR p.attempts>0) AND (?4 IS NULL OR p.event_key=?4) ORDER BY CASE WHEN p.attempts>0 THEN 0 ELSE 1 END,p.id LIMIT 1",
+            params![publisher.platform(),publisher.account(),now(),prepared.map(|(key,_)|key)],|r|Ok(DueReply{id:r.get(0)?,event:r.get(1)?,key:r.get(2)?,frozen:r.get(3)?,digest:r.get(4)?,attempts:r.get(5)?,root_uri:r.get(6)?,root_cid:r.get(7)?,disposition:r.get(8)?})).optional()?;
         let Some(DueReply {
             id,
             event,
@@ -409,7 +464,18 @@ fn publish_replies(
             let permit: Permit = serde_json::from_str(&permit_serialized)?;
             let prepared = (|| {
                 let snapshot = permits::ward_snapshot(store, &obs.id, &permit.number)?;
-                publisher.prepare_permit_reply(&obs, &permit, &snapshot, &root_uri, &root_cid)
+                if let Some((_, preview)) = prepared {
+                    let (near, ward, mapped_snapshot) = maps::read_prepared(&snapshot, preview)?;
+                    publisher.prepare_permit_reply_prepared(
+                        &mapped_snapshot,
+                        &root_uri,
+                        &root_cid,
+                        &near,
+                        &ward,
+                    )
+                } else {
+                    publisher.prepare_permit_reply(&obs, &permit, &snapshot, &root_uri, &root_cid)
+                }
             })();
             let record = match prepared {
                 Ok(record) => record,
