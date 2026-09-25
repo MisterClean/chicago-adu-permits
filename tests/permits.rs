@@ -139,6 +139,12 @@ fn ward_snapshot_maps_each_preapproval_site_with_its_confirmed_permit_count() {
     let text = reply["text"].as_str().unwrap();
     assert!(text.contains("4 issued ADU building permits linked to 3 preapproved sites"));
     assert!(text.contains("2/3 sites mapped"));
+    let map = json!({"alt":"Approximate linked permit locations","image":{"$type":"blob","mimeType":"image/jpeg","size":1000,"ref":{"$link":"bafyreitest"}},"aspectRatio":{"width":2160,"height":2160}});
+    let mut with_maps = reply.clone();
+    with_maps["embed"] = json!({"$type":"app.bsky.embed.images","images":[map.clone(),map]});
+    assert!(render::validate(&with_maps).is_ok());
+    with_maps.as_object_mut().unwrap().remove("reply");
+    assert!(render::validate(&with_maps).is_err());
     store
         .db
         .execute(

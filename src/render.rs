@@ -248,6 +248,7 @@ pub fn validate(record: &Value) -> Result<()> {
             (1..=2).contains(&images.len()),
             "expected one or two announcement images"
         );
+        let permit_map_reply = record["reply"].is_object() && images.len() == 2;
         for image in images {
             ensure!(
                 image["alt"].as_str().is_some_and(|s| !s.trim().is_empty()),
@@ -268,13 +269,15 @@ pub fn validate(record: &Value) -> Result<()> {
                 image["aspectRatio"]["width"].as_u64(),
                 image["aspectRatio"]["height"].as_u64(),
             );
-            ensure!(
+            let valid_dimensions = if permit_map_reply {
+                dimensions == (Some(2160), Some(2160))
+            } else {
                 matches!(
                     dimensions,
                     (Some(3200), Some(4000)) | (Some(3200), Some(3200))
-                ),
-                "invalid card dimensions"
-            );
+                )
+            };
+            ensure!(valid_dimensions, "invalid post image dimensions");
         }
     }
     Ok(())
