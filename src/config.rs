@@ -26,6 +26,46 @@ pub struct Config {
     pub bluesky: BlueskyConfig,
     pub media: MediaConfig,
     pub scorecards: ScorecardConfig,
+    pub maps: MapConfig,
+    #[serde(skip)]
+    pub render_deadline: Option<std::time::Instant>,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MapBackend {
+    #[default]
+    LocalChrome,
+    Cloudflare,
+}
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MapConfig {
+    pub backend: MapBackend,
+    pub renderer_dir: Option<PathBuf>,
+    pub node_bin: Option<PathBuf>,
+    pub account_id: Option<String>,
+    pub token_file: Option<PathBuf>,
+    pub attempt_timeout_seconds: u64,
+    pub daily_seconds: u64,
+    pub daily_pairs: u64,
+    pub cache_ward_backgrounds: bool,
+    pub basemap_max_age_days: u64,
+}
+impl Default for MapConfig {
+    fn default() -> Self {
+        Self {
+            backend: MapBackend::LocalChrome,
+            renderer_dir: None,
+            node_bin: None,
+            account_id: None,
+            token_file: None,
+            attempt_timeout_seconds: 90,
+            daily_seconds: 480,
+            daily_pairs: 16,
+            cache_ward_backgrounds: true,
+            basemap_max_age_days: 7,
+        }
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -87,6 +127,8 @@ impl Default for Config {
             bluesky: BlueskyConfig::default(),
             media: MediaConfig::default(),
             scorecards: ScorecardConfig::default(),
+            maps: MapConfig::default(),
+            render_deadline: None,
         }
     }
 }
@@ -120,6 +162,42 @@ impl Config {
             (30..=720).contains(&config.max_run_seconds),
             "max_run_seconds must be 30..720"
         );
+        ensure!(
+            (10..=120).contains(&config.maps.attempt_timeout_seconds),
+            "map timeout must be 10..120 seconds"
+        );
+        ensure!(
+            (120..=600).contains(&config.maps.daily_seconds),
+            "map daily budget must be 120..600 seconds"
+        );
+        ensure!(
+            (1..=50).contains(&config.maps.daily_pairs),
+            "map daily pair cap must be 1..50"
+        );
+        ensure!(
+            (1..=30).contains(&config.maps.basemap_max_age_days),
+            "basemap cache age must be 1..30 days"
+        );
+        if config.maps.backend == MapBackend::Cloudflare {
+            ensure!(
+                config.maps.daily_seconds >= config.maps.attempt_timeout_seconds + 75,
+                "map budget must accommodate one conservative timeout reservation"
+            );
+            ensure!(
+                config
+                    .maps
+                    .account_id
+                    .as_ref()
+                    .is_some_and(|s| s.len() == 32
+                        && s.bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+                "maps.account_id must be a Cloudflare account ID"
+            );
+            ensure!(
+                config.maps.token_file.is_some(),
+                "maps.token_file is required for Cloudflare rendering"
+            );
+        }
         secure_url(&config.source_base)?;
         secure_url(&config.bluesky.pds)?;
         if let Some(did) = &config.bluesky.did {

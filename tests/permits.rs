@@ -294,6 +294,7 @@ struct FakePublisher {
     sent: Vec<Value>,
     clock: i64,
     fail_reply: bool,
+    render_error: Option<DeliveryError>,
 }
 impl Publisher for FakePublisher {
     fn platform(&self) -> &'static str {
@@ -316,6 +317,9 @@ impl Publisher for FakePublisher {
         uri: &str,
         cid: &str,
     ) -> Result<Value> {
+        if let Some(error) = &self.render_error {
+            return Err(error.clone().into());
+        }
         if self.fail_reply {
             anyhow::bail!("map service unavailable");
         }
@@ -361,6 +365,7 @@ fn root_and_map_reply_have_independent_receipts_and_correct_thread_refs() {
         sent: vec![],
         clock: 0,
         fail_reply: false,
+        render_error: None,
     };
     publish::publish(&mut store, &config, &mut publisher).unwrap();
     assert_eq!(publisher.sent.len(), 1);
@@ -405,6 +410,7 @@ fn map_preparation_failure_does_not_resend_successful_root() {
         sent: vec![],
         clock: 0,
         fail_reply: true,
+        render_error: None,
     };
     assert!(publish::publish(&mut store, &config, &mut publisher).is_err());
     assert_eq!(publisher.sent.len(), 1);
@@ -430,4 +436,75 @@ fn map_preparation_failure_does_not_resend_successful_root() {
         .unwrap();
     publish::publish(&mut store, &config, &mut publisher).unwrap();
     assert_eq!(publisher.sent.len(), 2);
+}
+
+#[test]
+fn renderer_quota_and_credentials_preserve_root_and_adapter() {
+    for error in [
+        DeliveryError::Deferred {
+            message: "browser quota".into(),
+            until: now() + 3600,
+        },
+        DeliveryError::Hold {
+            message: "repair Cloudflare token".into(),
+        },
+    ] {
+        let (_dir, mut store, config) = setup();
+        let first = permit("1", "101083804", "ADU ID 914381");
+        scan(&mut store, &config, vec![first.clone()]).unwrap();
+        scan(
+            &mut store,
+            &config,
+            vec![first, permit("2", "101083805", "ADU ID 914381")],
+        )
+        .unwrap();
+        let mut publisher = FakePublisher {
+            sent: vec![],
+            clock: 0,
+            fail_reply: false,
+            render_error: Some(error.clone()),
+        };
+        assert!(publish::publish(&mut store, &config, &mut publisher).is_err());
+        assert_eq!(publisher.sent.len(), 1);
+        let (state, attempts, next): (String, i64, i64) = store
+            .db
+            .query_row(
+                "SELECT state,attempts,next_attempt FROM permit_replies",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(attempts, 0);
+        assert_eq!(
+            store
+                .db
+                .query_row("SELECT paused FROM adapter_state", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        match error {
+            DeliveryError::Deferred { until, .. } => {
+                assert_eq!(state, "retry");
+                assert!(next >= until);
+            }
+            _ => assert_eq!(state, "held"),
+        }
+        let frozen: Vec<_> =
+            std::fs::read_dir(config.state_dir.join("map-evidence/permit-snapshot"))
+                .unwrap()
+                .collect();
+        assert_eq!(frozen.len(), 1);
+        publisher.render_error = None;
+        store
+            .db
+            .execute("UPDATE permit_replies SET state='retry',next_attempt=0", [])
+            .unwrap();
+        store
+            .db
+            .execute("UPDATE adapter_state SET last_send=0", [])
+            .unwrap();
+        publish::publish(&mut store, &config, &mut publisher).unwrap();
+        assert_eq!(publisher.sent.len(), 2);
+    }
 }

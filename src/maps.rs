@@ -8,32 +8,41 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use image::GenericImageView;
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 pub fn render_pair(
     config: &Config,
     snapshot: &PermitWardSnapshot,
 ) -> Result<(PostImage, PostImage, i64)> {
-    let boundary = scorecard::fetch_boundary(config, snapshot.ward)?;
-    ensure!(
-        scorecard::inside_ward(&boundary, snapshot.focus.location),
-        "permit location lies outside the preapproval ward"
-    );
-    let points: Vec<_> = snapshot
-        .points
-        .iter()
-        .filter(|point| scorecard::inside_ward(&boundary, point.location))
-        .collect();
-    ensure!(
-        points.iter().any(|point| point.id == snapshot.focus.id),
-        "focus permit site is absent from ward map"
-    );
-    let mapped_sites = points.len() as i64;
-    let mut payload = serde_json::to_value(snapshot)?;
-    payload["mode"] = json!("permit");
-    payload["points"] = json!(points);
-    payload["mapped_sites"] = json!(mapped_sites);
-    payload["boundary"] = boundary;
+    let evidence = serde_json::to_vec(snapshot)?;
+    let identity = crate::map_renderer::digest(&evidence);
+    let payload: Value =
+        crate::map_renderer::freeze(config, "permit-payload", &identity, &evidence, || {
+            let boundary = scorecard::fetch_boundary(config, snapshot.ward)?;
+            ensure!(
+                scorecard::inside_ward(&boundary, snapshot.focus.location),
+                "permit location lies outside the preapproval ward"
+            );
+            let points: Vec<_> = snapshot
+                .points
+                .iter()
+                .filter(|point| scorecard::inside_ward(&boundary, point.location))
+                .collect();
+            ensure!(
+                points.iter().any(|point| point.id == snapshot.focus.id),
+                "focus permit site is absent from ward map"
+            );
+            let mapped_sites = points.len() as i64;
+            let mut payload = serde_json::to_value(snapshot)?;
+            payload["mode"] = json!("permit");
+            payload["points"] = json!(points);
+            payload["mapped_sites"] = json!(mapped_sites);
+            payload["boundary"] = boundary;
+            Ok(payload)
+        })?;
+    let mapped_sites = payload["mapped_sites"]
+        .as_i64()
+        .context("mapped site count")?;
     let (near, ward) = render_payload(config, &payload, snapshot, mapped_sites)?;
     Ok((near, ward, mapped_sites))
 }
@@ -44,44 +53,10 @@ fn render_payload(
     snapshot: &PermitWardSnapshot,
     mapped_sites: i64,
 ) -> Result<(PostImage, PostImage)> {
-    let work = tempfile::tempdir().context("create permit map work directory")?;
-    let input = work.path().join("snapshot.json");
-    fs::write(&input, serde_json::to_vec(payload)?)?;
-    let output = Command::new(&config.scorecards.node_bin)
-        .arg(config.scorecards.renderer_dir.join("render-live.mjs"))
-        .arg(&input)
-        .arg(work.path())
-        .envs(
-            config
-                .scorecards
-                .chrome_bin
-                .as_ref()
-                .map(|path| ("CHROME_BIN", path))
-                .into_iter(),
-        )
-        .output()
-        .context("start permit map renderer")?;
-    ensure!(
-        output.status.success(),
-        "permit map renderer failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(500)
-            .collect::<String>()
-    );
-    let verification: Value =
-        serde_json::from_slice(&fs::read(work.path().join("verification.json"))?)?;
-    ensure!(
-        verification["source_run"] == payload["source_run"]
-            && verification["focus"] == payload["focus"]["id"]
-            && verification["renders"]
-                .as_array()
-                .is_some_and(|renders| renders.len() == 2),
-        "permit map verification mismatch"
-    );
+    let (near, ward) = crate::map_renderer::pair(config, payload)?;
     let (near_alt, ward_alt) = map_alts(snapshot, mapped_sites);
-    let near = post_image(fs::read(work.path().join("n5.jpg"))?, near_alt)?;
-    let ward_map = post_image(fs::read(work.path().join("wc.jpg"))?, ward_alt)?;
+    let near = post_image(near, near_alt)?;
+    let ward_map = post_image(ward, ward_alt)?;
     Ok((near, ward_map))
 }
 

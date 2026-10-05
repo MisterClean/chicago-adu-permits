@@ -66,3 +66,6 @@ the same renderer before uploading a reply. The prototype `points.json` and
 
 See [the design review](../../docs/map-design-review.md) for data provenance,
 City attribution terms, validation, and the remaining production integration.
+
+
+For the integrated Cloudflare backend, see [Cloudflare operations](../../docs/operations.md#cloudflare-map-renderer). Development now requires Node 22.12+. After `npm ci --ignore-scripts`, run `npm run build-vendor` to bundle MapLibre 6's module worker into the existing vendor file. `node build-renderer.mjs OUTPUT.mjs` also builds that vendor asset and bundles the controller/Puppeteer for release packaging. No npm install is needed on the target host. Local Chrome remains available for previews.

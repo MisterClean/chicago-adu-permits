@@ -26,6 +26,29 @@ struct Cli {
 enum Command {
     /// Schema version supported by this release, without opening state.
     SchemaVersion,
+    /// Render a public frozen snapshot without opening SQLite or posting.
+    RenderMaps {
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
+    /// Add current ward markers to a cached basemap without a browser or database.
+    RenderWard {
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Warm ward basemaps without opening SQLite or posting; resumes cached wards.
+    WarmMaps {
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50"
+        )]
+        wards: Vec<i64>,
+    },
     /// Inspect schema and integrity without changing the database or calling external services.
     Check {
         /// Fail on stale ingestion, paused publishing, or deliveries needing attention.
@@ -184,6 +207,54 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let config = Config::load(cli.config.as_deref())?;
+    if let Command::RenderMaps {
+        ref snapshot,
+        ref output_dir,
+    } = cli.command
+    {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(snapshot)?
+            .take(4_000_001)
+            .read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 4_000_000, "map snapshot exceeds limit");
+        let value = serde_json::from_slice(&bytes)?;
+        let (near, ward) = adu_bot::map_renderer::pair(&config, &value)?;
+        std::fs::create_dir_all(output_dir)?;
+        std::fs::write(output_dir.join("n5.jpg"), near)?;
+        std::fs::write(output_dir.join("wc.jpg"), ward)?;
+        println!(
+            "{}",
+            serde_json::json!({"event":"maps_rendered","output_dir":output_dir})
+        );
+        return Ok(());
+    }
+    if let Command::RenderWard {
+        ref snapshot,
+        ref output,
+    } = cli.command
+    {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(snapshot)?
+            .take(4_000_001)
+            .read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 4_000_000, "map snapshot exceeds limit");
+        let value = serde_json::from_slice(&bytes)?;
+        let ward = adu_bot::map_renderer::cached_ward(&config, &value)?;
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(output, ward)?;
+        println!(
+            "{}",
+            serde_json::json!({"event":"ward_composed","output":output})
+        );
+        return Ok(());
+    }
+    if let Command::WarmMaps { ref wards } = cli.command {
+        return adu_bot::map_renderer::warm_wards(&config, wards);
+    }
     if let Command::Check { health } = cli.command {
         return check(&config, health);
     }
@@ -237,7 +308,12 @@ fn run() -> Result<()> {
     );
     let mut store = Store::open(&config.state_dir)?;
     match cli.command {
-        Command::SchemaVersion | Command::Check { .. } | Command::Migrate => unreachable!(),
+        Command::SchemaVersion
+        | Command::Check { .. }
+        | Command::Migrate
+        | Command::RenderMaps { .. }
+        | Command::WarmMaps { .. }
+        | Command::RenderWard { .. } => unreachable!(),
         Command::Ingest => source::ingest(&mut store, &mut Socrata::new(&config), &config)?,
         Command::IngestPermits => permits::ingest(
             &mut store,

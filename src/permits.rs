@@ -763,7 +763,7 @@ pub fn review_match(
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitMapPoint {
     pub id: String,
     pub address: String,
@@ -772,7 +772,7 @@ pub struct PermitMapPoint {
     pub location: Location,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermitWardSnapshot {
     pub source_run: i64,
     pub as_of: NaiveDate,

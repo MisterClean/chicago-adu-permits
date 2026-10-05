@@ -58,9 +58,9 @@ The scorecard worker is disabled by default. Once enabled, it queues replies to 
 
 The first image shows the application location in an oblique neighborhood map. The second outlines its ward and marks the currently preapproved applications in the April 1, 2026 onward cohort. The text reports requested ADUs, application count, rank among all 50 wards, citywide share, and an as-of date. Zero requested units remain zero; an unknown quantity blocks a scorecard rather than being guessed. Pins without usable City coordinates or outside their reported Cook County ward are omitted, with mapped coverage reported. Maps use City coordinates, a Cook County boundary, and OpenMapTiles/OpenStreetMap context. The [map preview](tools/map-preview/README.md) also keeps the dated design sample.
 
-Rendering requires Node 20+, Chrome with software WebGL, outbound access to the map tiles and Cook County boundary, and materially more memory than the native announcement worker. Set `[scorecards].renderer_dir` to the release's `map-renderer` directory on a deployed host, and `[scorecards].chrome_bin` if Chrome is not at `/usr/bin/google-chrome`. Run a source-backed local preview before enabling the separate schedule. See [operations](docs/operations.md#scorecard-activation-and-recovery) and [deployment](docs/deployment.md#scorecard-worker).
+Rendering requires Node 22.12+ and either local Chrome with software WebGL or Cloudflare Browser Run. `[maps].backend` defaults to `local_chrome`; `cloudflare` moves WebGL off the host and caches clean ward basemaps for native marker composition. See [Cloudflare setup, limits, and diagnostic commands](docs/operations.md#cloudflare-map-renderer). Measure combined Rust/Node memory before production cutover. Set `[scorecards].renderer_dir` to the release's `map-renderer` directory on a deployed host, and `[scorecards].chrome_bin` if Chrome is not at `/usr/bin/google-chrome`. Run a source-backed local preview before enabling the separate schedule. See [operations](docs/operations.md#scorecard-activation-and-recovery) and [deployment](docs/deployment.md#scorecard-worker).
 
-Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design. The ward view shows all mapped, uniquely linked issued-permit sites in that ward, with marker numbers counting permits at each preapproved site and a red ring around the current site. The main publishing worker currently prepares those permit maps and therefore also needs the renderer, Chrome, and enough memory for a map render.
+Building-permit cards lead with a green check and **ADU BUILDING PERMIT ISSUED**. Their map replies use the same neighborhood and ward renderer and visual design. The ward view shows all mapped, uniquely linked issued-permit sites in that ward, with marker numbers counting permits at each preapproved site and a red ring around the current site. The main publishing worker currently prepares those permit maps and therefore also needs the configured renderer backend and sufficient measured memory. A successful root is preserved when its map reply fails.
 
 ## Profile artwork
 
@@ -89,6 +89,9 @@ cargo run --locked --example generate_avatar
 | `permit-matches list` | Inspect confirmed and review-needed permit links |
 | `permit-matches confirm ID NUMBER --reason TEXT` | Approve a proposed link for the normal delivery path |
 | `permit-matches reject ID NUMBER --reason TEXT` | Reject a proposed link with an append-only review receipt |
+| `render-maps --snapshot FILE --output-dir DIR` | Render a frozen public map pair without SQLite or posting |
+| `render-ward --snapshot FILE --output PATH.jpg` | Compose current ward markers on a cached background without a browser |
+| `warm-maps [--wards 26,27]` | Cache missing ward backgrounds, bounded by Cloudflare quota |
 | `scorecards preview ID --output-dir DIR` | Render both source-backed maps, alt text, post text, and frozen evidence locally without posting |
 | `scorecards run` | Prepare or reconcile and send one due scorecard reply when enabled |
 | `scorecards run-prepared REPLY_ID --input-dir DIR` | Send one queued reply from reviewed preview files, using the production outbox without running Chrome there |

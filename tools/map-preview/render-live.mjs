@@ -8,6 +8,12 @@ import {fileURLToPath} from 'node:url';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const [input,output]=process.argv.slice(2);
 if(!input||!output)throw Error('Usage: node render-live.mjs SNAPSHOT.json OUTPUT_DIR');
+if(process.env.ADU_MAP_BACKEND==='cloudflare'){
+ const {main}=await import('./render-cloudflare.mjs');
+ await main(input,output);
+ process.exit(0);
+}
+
 const payload=await fs.readFile(input);
 const snapshot=JSON.parse(payload);
 if(!Number.isInteger(snapshot.ward)||snapshot.ward<1||snapshot.ward>50||!snapshot.boundary)throw Error('Invalid map snapshot');
@@ -54,6 +60,10 @@ let timer;
 try{
  await Promise.race([done,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(`Chrome render timed out: ${stderr}`)),120000);}),new Promise((_,reject)=>child.on('error',reject)),new Promise((_,reject)=>child.on('exit',(code,signal)=>reject(Error(`Chrome exited before rendering (${code??signal}): ${stderr}`))))]);
  const verification=JSON.parse(await fs.readFile(path.join(output,'verification.json')));
+ const {createHash}=await import('node:crypto');
+ verification.schema_version=1;verification.input_sha256=createHash('sha256').update(payload).digest('hex');verification.asset_sha256=process.env.ADU_MAP_ASSET_DIGEST;
+ for(const r of verification.renders){r.name=r.id+'.jpg';r.sha256=createHash('sha256').update(await fs.readFile(path.join(output,r.name))).digest('hex');}
+ await fs.writeFile(path.join(output,'verification.json'),JSON.stringify(verification));
  if(verification.renders?.length!==2||verification.source_run!==snapshot.source_run||verification.focus!==snapshot.focus.id||verification.mode!==(snapshot.mode??'scorecard'))throw Error('Render verification mismatch');
  process.stdout.write(JSON.stringify(verification)+'\n');
 }finally{

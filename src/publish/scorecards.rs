@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 struct DueReply {
     id: i64,
@@ -164,6 +164,16 @@ fn run_impl(
     publisher: &mut Bluesky,
     prepared: Option<(i64, &Path)>,
 ) -> Result<()> {
+    let mut scoped_config = config.clone();
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(config.max_run_seconds);
+    scoped_config.render_deadline = Some(
+        config
+            .render_deadline
+            .map_or(deadline, |existing| existing.min(deadline)),
+    );
+    let config = &scoped_config;
+    publisher.set_render_deadline(config.render_deadline.expect("render deadline"));
     if prepared.is_none() {
         sync_new(store, publisher)?;
     }
@@ -287,16 +297,13 @@ fn run_impl(
         None => match render_maps(config, &work, &snapshot) {
             Ok(images) => images,
             Err(error) => {
-                failure(
-                    store,
-                    due.id,
-                    publisher,
-                    &DeliveryError::Retry {
-                        message: format!("render scorecard: {error:#}"),
-                        after: Some(900),
-                    },
-                    due.attempts + 1,
-                )?;
+                let error = crate::map_renderer::delivery_failure(&error);
+                let attempts = if matches!(error, DeliveryError::Deferred { .. }) {
+                    due.attempts
+                } else {
+                    due.attempts + 1
+                };
+                failure(store, due.id, publisher, &error, attempts)?;
                 return Ok(());
             }
         },
@@ -445,7 +452,10 @@ fn failure(
         )?;
     }
     let (state, delay) = match error {
-        DeliveryError::Invalid | DeliveryError::Conflict => ("held", 0),
+        DeliveryError::Invalid | DeliveryError::Conflict | DeliveryError::Hold { .. } => {
+            ("held", 0)
+        }
+        DeliveryError::Deferred { until, .. } => ("retry", (until - now()).max(1)),
         DeliveryError::Auth => ("retry", 3600),
         DeliveryError::Retry { after, .. } => {
             let base = match attempts {
@@ -504,50 +514,10 @@ fn read_prepared(input_dir: &Path, snapshot: &Snapshot) -> Result<Vec<(Vec<u8>, 
 
 fn render_maps(
     config: &Config,
-    work: &Path,
+    _work: &Path,
     snapshot: &Snapshot,
 ) -> Result<Vec<(Vec<u8>, String)>> {
-    fs::create_dir_all(work)?;
-    let input = work.join("snapshot.json");
-    fs::write(&input, serde_json::to_vec(snapshot)?)?;
-    let output = Command::new(&config.scorecards.node_bin)
-        .arg(config.scorecards.renderer_dir.join("render-live.mjs"))
-        .arg(&input)
-        .arg(work)
-        .envs(
-            config
-                .scorecards
-                .chrome_bin
-                .as_ref()
-                .map(|p| ("CHROME_BIN", p))
-                .into_iter(),
-        )
-        .output()
-        .context("start map renderer")?;
-    ensure!(
-        output.status.success(),
-        "map renderer failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(500)
-            .collect::<String>()
-    );
-    let verification: Value = serde_json::from_slice(&fs::read(work.join("verification.json"))?)?;
-    ensure!(
-        verification["source_run"] == snapshot.source_run
-            && verification["focus"] == snapshot.focus.id
-            && verification["renders"]
-                .as_array()
-                .is_some_and(|a| a.len() == 2),
-        "map verification mismatch"
-    );
-    let neighborhood = fs::read(work.join("n5.jpg"))?;
-    let ward = fs::read(work.join("wc.jpg"))?;
-    ensure!(
-        valid_jpeg(&neighborhood) && valid_jpeg(&ward),
-        "invalid rendered JPEGs"
-    );
-    fs::remove_dir_all(work)?;
+    let (neighborhood, ward) = crate::map_renderer::pair(config, &serde_json::to_value(snapshot)?)?;
     let (neighborhood_alt, ward_alt) = map_alts(snapshot);
     Ok(vec![(neighborhood, neighborhood_alt), (ward, ward_alt)])
 }
