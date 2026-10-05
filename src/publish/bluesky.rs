@@ -429,6 +429,9 @@ impl Bluesky {
     }
 }
 impl Publisher for Bluesky {
+    fn set_render_deadline(&mut self, deadline: std::time::Instant) {
+        self.config.render_deadline = Some(deadline);
+    }
     fn platform(&self) -> &'static str {
         "bluesky"
     }

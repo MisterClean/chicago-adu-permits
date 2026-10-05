@@ -27,8 +27,22 @@ pds = "https://bsky.social"
 # google_api_key_file = "/etc/adu-bot/google-maps-api-key"
 
 [scorecards]
-# Enable only after installing the renderer and its separate high-memory service.
+# Enable after validating the selected map backend and activating the reply queue.
 enabled = false
 renderer_dir = "/opt/adu-bot/current/map-renderer"
 node_bin = "/opt/node-v24/bin/node"
 # chrome_bin = "/usr/bin/google-chrome"
+
+[maps]
+# Defaults preserve local Chrome. Cloudflare offloads WebGL without a Worker deployment.
+backend = "local_chrome"
+# renderer_dir and node_bin default to the legacy [scorecards] paths above.
+# account_id = "YOUR_32_CHARACTER_CLOUDFLARE_ACCOUNT_ID"
+# token_file = "/etc/adu-bot/cloudflare-browser-token"
+attempt_timeout_seconds = 90
+# Account-wide Browser Run Free quota is 600 seconds/day; retain headroom.
+daily_seconds = 480
+daily_pairs = 16
+# Cloudflare renders a clean ward base once; Rust adds current markers and copy.
+cache_ward_backgrounds = true
+basemap_max_age_days = 7

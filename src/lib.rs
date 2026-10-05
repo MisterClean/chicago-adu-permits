@@ -1,6 +1,7 @@
 //! Bounded Chicago preapproval observations, durable event decisions, and social delivery.
 pub mod config;
 pub mod events;
+pub mod map_renderer;
 pub mod maps;
 pub mod media;
 pub mod migrations;
@@ -12,3 +13,4 @@ pub mod render;
 pub mod scorecard;
 pub mod source;
 pub mod store;
+pub mod ward_card;

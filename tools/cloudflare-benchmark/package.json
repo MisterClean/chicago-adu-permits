@@ -1,0 +1,7 @@
+{
+  "name": "chicago-adu-cloudflare-benchmark",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.12"},
+  "dependencies": {"puppeteer-core": "25.12.0"}
+}

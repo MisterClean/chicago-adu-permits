@@ -27,12 +27,14 @@ pub enum Reconciliation {
     Absent,
     Conflict,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DeliveryError {
     Retry { message: String, after: Option<i64> },
     Auth,
     Invalid,
     Conflict,
+    Hold { message: String },
+    Deferred { message: String, until: i64 },
 }
 impl std::fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +43,7 @@ impl std::fmt::Display for DeliveryError {
             Self::Auth => write!(f, "authentication or account identity failed"),
             Self::Invalid => write!(f, "platform rejected record"),
             Self::Conflict => write!(f, "remote record conflict"),
+            Self::Hold { message } | Self::Deferred { message, .. } => write!(f, "{message}"),
         }
     }
 }
@@ -53,6 +56,7 @@ pub struct DeliveryIdentity {
 }
 
 pub trait Publisher {
+    fn set_render_deadline(&mut self, _deadline: Instant) {}
     fn platform(&self) -> &'static str;
     fn account(&self) -> &str;
     fn prepare(&mut self, observation: &Observation) -> Result<Value>;
@@ -188,6 +192,10 @@ pub fn publish(store: &mut Store, config: &Config, publisher: &mut impl Publishe
     );
     store.sync_deliveries(config)?;
     let started = Instant::now();
+    let deadline = started + std::time::Duration::from_secs(config.max_run_seconds);
+    publisher.set_render_deadline(deadline);
+    let mut scoped_config = config.clone();
+    scoped_config.render_deadline = Some(deadline);
     let mut processed = 0;
     let mut failed = false;
     loop {
@@ -368,7 +376,7 @@ pub fn publish(store: &mut Store, config: &Config, publisher: &mut impl Publishe
     }
     publish_replies(
         store,
-        config,
+        &scoped_config,
         publisher,
         config.max_posts_per_run.saturating_sub(processed),
         &mut failed,
@@ -435,6 +443,12 @@ fn publish_replies(
     }
     store.db.execute("INSERT OR IGNORE INTO permit_replies(event_key,platform,account_id,state) SELECT e.event_key,d.platform,d.account_id,'pending' FROM deliveries d JOIN events e USING(event_key) WHERE e.detection_kind='building_permit' AND e.disposition='pending' AND d.state='sent' AND d.platform=?1 AND d.account_id=?2",params![publisher.platform(),publisher.account()])?;
     for _ in 0..remaining {
+        if config
+            .render_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            break;
+        }
         let row:Option<DueReply>=store.db.query_row(
             "SELECT p.id,p.event_key,p.record_key,p.record_json,p.record_hash,p.attempts,d.remote_uri,d.remote_cid,e.disposition FROM permit_replies p JOIN deliveries d ON d.event_key=p.event_key AND d.platform=p.platform AND d.account_id=p.account_id JOIN events e ON e.event_key=p.event_key WHERE p.platform=?1 AND p.account_id=?2 AND p.state IN ('pending','prepared','sending','retry') AND p.next_attempt<=?3 AND d.state='sent' AND (e.disposition='pending' OR p.attempts>0) AND (?4 IS NULL OR p.event_key=?4) ORDER BY CASE WHEN p.attempts>0 THEN 0 ELSE 1 END,p.id LIMIT 1",
             params![publisher.platform(),publisher.account(),now(),prepared.map(|(key,_)|key)],|r|Ok(DueReply{id:r.get(0)?,event:r.get(1)?,key:r.get(2)?,frozen:r.get(3)?,digest:r.get(4)?,attempts:r.get(5)?,root_uri:r.get(6)?,root_cid:r.get(7)?,disposition:r.get(8)?})).optional()?;
@@ -463,7 +477,17 @@ fn publish_replies(
             let obs: Observation = serde_json::from_str(&app_serialized)?;
             let permit: Permit = serde_json::from_str(&permit_serialized)?;
             let prepared = (|| {
-                let snapshot = permits::ward_snapshot(store, &obs.id, &permit.number)?;
+                let evidence =
+                    serde_json::to_vec(&serde_json::json!({"application":obs,"permit":permit}))?;
+                let identity =
+                    format!("{}:{}:{}", publisher.platform(), publisher.account(), event);
+                let snapshot = crate::map_renderer::freeze(
+                    config,
+                    "permit-snapshot",
+                    &identity,
+                    &evidence,
+                    || permits::ward_snapshot(store, &obs.id, &permit.number),
+                )?;
                 if let Some((_, preview)) = prepared {
                     let (near, ward, mapped_snapshot) = maps::read_prepared(&snapshot, preview)?;
                     publisher.prepare_permit_reply_prepared(
@@ -490,7 +514,14 @@ fn publish_replies(
                                 message: format!("prepare permit maps: {error}"),
                                 after: None,
                             }),
-                        attempts,
+                        if matches!(
+                            error.downcast_ref::<DeliveryError>(),
+                            Some(DeliveryError::Deferred { .. } | DeliveryError::Hold { .. })
+                        ) {
+                            attempts
+                        } else {
+                            attempts + 1
+                        },
                     )?;
                     *failed = true;
                     continue;
@@ -630,7 +661,10 @@ fn reply_error(
             )?;
             ("retry", 3600)
         }
-        DeliveryError::Invalid | DeliveryError::Conflict => ("held", 0),
+        DeliveryError::Invalid | DeliveryError::Conflict | DeliveryError::Hold { .. } => {
+            ("held", 0)
+        }
+        DeliveryError::Deferred { until, .. } => ("retry", (until - now()).max(1)),
         DeliveryError::Retry { after, .. } => {
             let base = match attempts {
                 0 | 1 => 60,
@@ -690,7 +724,10 @@ fn delivery_error(
             )?;
             ("retry", 3600)
         }
-        DeliveryError::Invalid | DeliveryError::Conflict => ("held", 0),
+        DeliveryError::Invalid | DeliveryError::Conflict | DeliveryError::Hold { .. } => {
+            ("held", 0)
+        }
+        DeliveryError::Deferred { until, .. } => ("retry", (until - now()).max(1)),
         DeliveryError::Retry { after, .. } => {
             let base = match attempts {
                 0 | 1 => 60,

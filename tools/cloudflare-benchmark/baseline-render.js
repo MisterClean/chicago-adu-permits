@@ -1,7 +1,5 @@
 const BLUE='#41b6e6',RED='#e4002b';
-const {snapshot,base,targets=['n5','wc']}=window.aduRenderInput??{snapshot:await fetch('/payload.json').then(r=>r.json()),base:await fetch('/data/base-style.json').then(r=>r.json())};
-const exportBlob=window.aduExportBlob??(async(name,blob)=>{const r=await fetch(`/export/${name}`,{method:'POST',body:blob});if(!r.ok)throw Error('Image export failed');});
-const exportVerification=window.aduExportVerification??(async(value)=>{const r=await fetch('/export/verification.json',{method:'POST',body:JSON.stringify(value)});if(!r.ok)throw Error('Verification export failed');});
+const [snapshot,base]=await Promise.all([fetch('/payload.json').then(r=>r.json()),fetch('/data/base-style.json').then(r=>r.json())]);
 const center=[snapshot.focus.location.longitude,snapshot.focus.location.latitude];
 const points=snapshot.points;
 const permit=snapshot.mode==='permit';
@@ -13,7 +11,7 @@ if(!bounds.every(Number.isFinite)||points.length<1)throw Error('Invalid map evid
 await document.fonts.load('bold 80px Big');await document.fonts.load('20px Roboto');
 const themes={n5:{bg:'#e0e2e3',road:'#fafafa',case:'#c5c8ca',building:'#f3f4f4',ink:'#3b4348',park:'#d1d7d2',water:'#b1cbd6',rail:'#798185'},wc:{bg:'#f4f2ed',road:'#fff',case:'#d8d6d0',building:'#e3e1db',ink:'#66645d',park:'#e4e9d7',water:'#b0d9e5',rail:'#326884'}};
 function style(t,ward){
- const s=structuredClone(base);delete s.sprite;delete s.sources.ne2_shaded;
+ const s=structuredClone(base);
  s.layers=s.layers.filter(l=>!l.id.startsWith('boundary')&&!l.id.startsWith('label_')&&!l.id.includes('shield')&&!l.id.includes('airport'));
  for(const l of s.layers){
   const p=l.paint??={};
@@ -47,13 +45,14 @@ function positions(map){
 }
 const results=[];
 async function render(id){
- const ward=id!=='n5',t=themes[ward?'wc':id],height=ward?800:848;
+ const ward=id==='wc',t=themes[id],height=ward?800:848;
  document.querySelector('#map').style.height=height+'px';
  document.querySelector('#status').textContent=`Rendering ${id}`;
- const map=new maplibregl.Map({container:'map',style:style(t,ward),center,zoom:16.58,...(ward?{bounds:[[bounds[0],bounds[1]],[bounds[2],bounds[3]]],fitBoundsOptions:{padding:{top:44,bottom:54,left:76,right:76}}}:{}),pitch:ward?0:60,bearing:ward?0:-42,interactive:false,attributionControl:false,canvasContextAttributes:{preserveDrawingBuffer:true,antialias:true},pixelRatio:2});
+ const map=new maplibregl.Map({container:'map',style:style(t,ward),center,zoom:16.58,pitch:ward?0:60,bearing:ward?0:-42,interactive:false,attributionControl:false,canvasContextAttributes:{preserveDrawingBuffer:true,antialias:true},pixelRatio:2});
  const errors=[];map.on('error',e=>errors.push(e.error?.message||String(e)));
- await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Map style timed out')),45000);map.once('style.load',()=>{clearTimeout(timer);resolve();});});
+ await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Map style timed out')),45000);map.once('load',()=>{clearTimeout(timer);resolve();});});
  if(ward){
+  map.fitBounds([[bounds[0],bounds[1]],[bounds[2],bounds[3]]],{padding:{top:44,bottom:54,left:76,right:76},duration:0});
   map.addSource('ward',{type:'geojson',data:boundary});
   const rings=boundary.features.flatMap(f=>f.geometry.type==='MultiPolygon'?f.geometry.coordinates.map(p=>p[0]):[f.geometry.coordinates[0]]);
   map.addSource('outside',{type:'geojson',data:{type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[[[-180,-85],[180,-85],[180,85],[-180,85],[-180,-85]],...rings]}}});
@@ -67,14 +66,6 @@ async function render(id){
  if(!ward)map.addLayer({id:'nearby-places',type:'symbol',source:'openmaptiles','source-layer':'poi',filter:['match',['get','class'],['catering','shop','food','restaurant','cafe'],true,false],layout:{'text-field':['coalesce',['get','name_en'],['get','name']],'text-font':['Noto Sans Regular'],'text-size':17,'text-variable-anchor':['top','bottom'],'text-radial-offset':.6,'text-max-width':9,'text-optional':true},paint:{'text-color':'#233943','text-halo-color':'#fff','text-halo-width':2}});
  await waitIdle(map);
  if(errors.length)throw Error(`Map errors: ${errors.slice(0,3).join('; ')}`);
- if(id==='ward-base'){
-  const c=map.getCenter(),p=map.project(c);
-  const blob=await new Promise(resolve=>map.getCanvas().toBlob(resolve,'image/png'));
-  if(!blob)throw Error('Ward background export failed');
-  await exportBlob('ward-base.png',blob);
-  results.push({id,bytes:blob.size,width:2160,height:1600,errors,camera:{projection:'web-mercator',center:c.toArray(),origin:[p.x,p.y],world_size:512*2**map.getZoom(),width:1080,height:800,pixel_ratio:2,bearing:map.getBearing(),pitch:map.getPitch()},references:points.map(f=>({id:f.id,location:f.location,pixel:map.project([f.location.longitude,f.location.latitude])}))});
-  map.remove();return;
- }
  const canvas=document.createElement('canvas');canvas.width=canvas.height=2160;const ctx=canvas.getContext('2d');ctx.scale(2,2);
  ctx.fillStyle='#000';ctx.fillRect(0,0,1080,1080);ctx.fillStyle=BLUE;ctx.fillRect(0,0,1080,8);ctx.fillStyle=RED;for(let i=0;i<4;i++)star(ctx,874+i*47,44,16);
  label(ctx,ward?(permit?'THE WARD':'THE WARD SO FAR'):(permit?'AROUND THE PERMIT':'AROUND THE PREAPPROVAL'),42,55,21,BLUE);
@@ -98,10 +89,11 @@ async function render(id){
  let quality=.94,blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
  while(blob.size>1_950_000&&quality>.5){quality-=.04;blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));}
  if(blob.size>2_000_000)throw Error('Scorecard JPEG exceeds Bluesky limit');
- await exportBlob(`${id}.jpg`,blob);
+ const response=await fetch(`/export/${id}.jpg`,{method:'POST',body:blob});if(!response.ok)throw Error('Image export failed');
  results.push({id,bytes:blob.size,width:2160,height:2160,errors});
  map.remove();
 }
-for(const target of targets)await render(target);
-await exportVerification({mode:snapshot.mode??'scorecard',source_run:snapshot.source_run,ward:snapshot.ward,focus:snapshot.focus.id,renders:results});
+await render('n5');await render('wc');
+const response=await fetch('/export/verification.json',{method:'POST',body:JSON.stringify({mode:snapshot.mode??'scorecard',source_run:snapshot.source_run,ward:snapshot.ward,focus:snapshot.focus.id,renders:results})});
+if(!response.ok)throw Error('Verification export failed');
 document.querySelector('#status').textContent='Scorecard maps complete';
