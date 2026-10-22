@@ -2,7 +2,7 @@
 name = "adu-bot"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.99"
 description = "Chicago ADU preapproval monitor with a durable, reviewable social outbox"
 default-run = "adu-bot"
 
