@@ -17,7 +17,7 @@
     "@mapbox/vector-tile": "3.0.0",
     "maplibre-gl": "6.15.0",
     "pbf": "5.1.2",
-    "puppeteer-core": "25.15.0"
+    "puppeteer-core": "25.16.0"
   },
   "devDependencies": {
     "esbuild": "0.28.2"
